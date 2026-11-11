@@ -174,6 +174,26 @@ time-limited job stops the run, and rerunning resumes it.
 
 Writes `ranking_tables.md` and `ranking_results.csv` to the run folder.
 
+**Per-option probabilities.** Every run (smoke or full) ends by writing
+`$RUN/option_probs/<MODEL>[_smoke]_<run folder>_<UTC time>.csv` with one row per request and option:
+
+| column | meaning |
+|---|---|
+| `request_id`, `entity_id`, `source`, `k`, `order`, `model` | which request |
+| `position`, `option_letter`, `option_code` | where the option was shown (A = 1) and its code |
+| `probability` | the model's normalized probability for this option, full precision |
+| `prob_rank` | 1 = highest; ties go to the earlier position, the same rule that picks the answer |
+| `is_prediction`, `is_gt`, `answerable` | picked by the runner / the reference code / reference code is among the options |
+| `n_tied_top` | how many options share the highest probability (1 = no tie) |
+
+A `.json` file of the same name records the model revision, the run's settings, the hashes of `requests.jsonl` and the
+predictions file, and counts (including requests with a tie for the top). Each export is a new file, so earlier ones are
+kept. To write one by hand (for example after an interrupted run): `$PY run_decision_model.py export DREX --run-dir $RUN`
+(add `--smoke` for the smoke-test predictions). A full run gives about 900,000 rows (roughly 90 MB) per model.
+
+Ties: in tests, Drex often gave two options exactly the same probability (52 of 210 synthetic requests; Elephant and Clef
+none), apparently because its scores are computed at reduced precision. Check `requests_with_tied_top` in the `.json`.
+
 ## Data handling
 
 `requests.jsonl` in the run folder contains entity and query text, so keep the run folder with the data. Logs hold only counts and error types.

@@ -18,6 +18,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import random
 import subprocess
 import sys
@@ -132,6 +133,73 @@ def load_requests(run_dir, stride):
     return [r for r in rows if int(hashlib.sha256(r["request_id"].encode()).hexdigest()[:8], 16) % stride == 0]
 
 
+EXPORT_COLUMNS = ("request_id", "entity_id", "source", "k", "order", "model", "position", "option_letter", "option_code",
+                  "probability", "prob_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
+
+
+def export_options(run_dir, model, smoke):
+    """One timestamped CSV per call: a row per (request, option) with its probability, plus a .json sidecar describing it.
+    Reads requests.jsonl and the predictions file; writes run_dir/option_probs/<MODEL>[_smoke]_<run>_<UTC time>.csv.
+    Holds codes and ids only (no entity text). Standard library only, so it runs in the model envs and the base python."""
+    run_dir = Path(run_dir).resolve()
+    pred_path = run_dir / f"predictions_{model}{'_smoke' if smoke else ''}.jsonl"
+    meta_path = pred_path.with_name(pred_path.name + ".meta.json")
+    if not pred_path.exists() or not meta_path.exists():
+        sys.exit(f"STOPPED: {pred_path.name} (or its .meta.json) not found in {run_dir}")
+    meta = json.loads(meta_path.read_text())
+    requests_sha = hashlib.sha256((run_dir / "requests.jsonl").read_bytes()).hexdigest()
+    if meta.get("requests_sha256") != requests_sha:
+        sys.exit(f"STOPPED: {pred_path.name} was made for a different requests.jsonl; not exporting")
+    requests = load_requests(run_dir, meta.get("stride", 1))
+    latest = {}
+    for row in lh_core.read_jsonl_readonly(pred_path)[0]:
+        if row.get("status") == "ok":
+            latest[row["request_id"]] = row          # a later ok row for the same request wins
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    out = run_dir / "option_probs" / f"{model}{'_smoke' if smoke else ''}_{run_dir.name}_{stamp}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".tmp")
+    n_rows = n_req = n_tied = 0
+    with open(tmp, "w", newline="", encoding="utf8") as f:
+        w = csv.writer(f)
+        w.writerow(EXPORT_COLUMNS)
+        for r in requests:
+            p = latest.get(r["request_id"])
+            if p is None:
+                continue
+            letters = list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
+            probs = p["probabilities"]
+            top = max(probs.values())
+            tied = sum(v == top for v in probs.values())
+            n_req += 1
+            n_tied += tied > 1
+            rank = {l: i for i, l in enumerate(sorted(letters, key=lambda l: (-probs[l], letters.index(l))), 1)}
+            for pos, (letter, code) in enumerate(zip(letters, r["codes"]), 1):
+                w.writerow((r["request_id"], r.get("entity_id", r["request_id"].split("|")[0]), r.get("source", ""), r["k"],
+                            r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter],
+                            int(letter == p["prediction_letter"]), int(code == r["gt_code"]), int(bool(r["answerable"])), tied))
+                n_rows += 1
+    os.replace(tmp, out)
+    revision = json.loads((HERE / "revisions.lock.json").read_text())["models"].get(model, {}).get("revision")
+    lh_core.write_json_atomic(out.with_suffix(".json"), {
+        "file": out.name, "model": model, "model_revision": revision, "run_dir": run_dir.name, "smoke": smoke,
+        "stride": meta.get("stride", 1), "created_utc": stamp, "requests_sha256": requests_sha,
+        "predictions_sha256": hashlib.sha256(pred_path.read_bytes()).hexdigest(),
+        "requests_selected": len(requests), "requests_exported": n_req, "requests_without_result": len(requests) - n_req,
+        "requests_with_tied_top": n_tied, "rows": n_rows, "columns": list(EXPORT_COLUMNS),
+        "notes": {"position": "1-based place the option was shown in (A=1)",
+                  "probability": "normalized probability as given to the scorer (repr of the float, full precision)",
+                  "prob_rank": "1 = highest probability; ties broken by position, the same rule that picks the prediction",
+                  "is_prediction": "the option the runner picked (highest probability, earliest position on a tie)",
+                  "n_tied_top": "how many options share the highest probability (1 = no tie)"}})
+    lh_core.log(f"{model}: exported {n_req} requests ({n_rows} option rows, {n_tied} with a tie for the top) -> {out}")
+    return out
+
+
+def cmd_export(args):
+    export_options(args.run_dir, args.model.upper(), args.smoke)
+
+
 def cmd_worker(args):
     model = args.model.upper()
     run_dir = Path(args.run_dir).resolve()
@@ -203,6 +271,8 @@ def cmd_worker(args):
                     f"({dict(classes)}). Rerun the same command to retry them.")
     else:
         lh_core.log(f"{model}: finished, {len(wanted)}/{len(wanted)} ok")
+    if ok & wanted:
+        export_options(run_dir, model, args.stride > 1)
 
 
 def cmd_run(args):
@@ -382,7 +452,7 @@ def positive_int(text):
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("build", "run", "worker", "report"):
+    for name in ("build", "run", "worker", "report", "export"):
         s = sub.add_parser(name)
         s.add_argument("--run-dir", required=True, help="output folder for this run, e.g. results/original_full")
         if name in ("run", "worker"):
@@ -396,8 +466,11 @@ def main():
             s.add_argument("--stride", type=positive_int, default=1)
         if name == "run":
             s.add_argument("--gpu", required=True)
+        if name == "export":
+            s.add_argument("model", choices=[m for m in lh_core.MODELS_INFO] + [m.lower() for m in lh_core.MODELS_INFO])
+            s.add_argument("--smoke", action="store_true", help="export the smoke-test predictions instead of the full run")
     args = p.parse_args()
-    {"build": cmd_build, "run": cmd_run, "worker": cmd_worker, "report": cmd_report}[args.cmd](args)
+    {"build": cmd_build, "run": cmd_run, "worker": cmd_worker, "report": cmd_report, "export": cmd_export}[args.cmd](args)
 
 
 if __name__ == "__main__":
