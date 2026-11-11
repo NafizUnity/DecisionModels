@@ -48,7 +48,8 @@ python --version
 echo "pip: $(command -v pip)"
 
 step "Installing the CUDA 12.8 toolkit into the env (nvcc is needed to compile causal-conv1d)"
-"$CONDA_INSTALLER" install -y -c "nvidia/label/$CUDA_LABEL" cuda-toolkit
+# pin the version as well as the channel: newer conda/mamba otherwise take a newer toolkit from conda-forge
+"$CONDA_INSTALLER" install -y -c "nvidia/label/$CUDA_LABEL" "cuda-toolkit=12.8" "cuda-version=12.8"
 export CUDA_HOME="$CONDA_PREFIX"
 export PATH="$CUDA_HOME/bin:$PATH"
 NVCC_VERSION="$(nvcc --version)"
