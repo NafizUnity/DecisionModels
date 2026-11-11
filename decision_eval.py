@@ -17,7 +17,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
-from run_decision_model import LETTERS, cell_metrics, order_for  # noqa: E402
+from run_decision_model import LETTERS, cell_metrics, load_requests, order_for  # noqa: E402
 
 KS = (5, 10, 20)
 ORDERS = ("original", "shuf1")
@@ -117,9 +117,10 @@ def cmd_report(args):
     out = Path(args.run_dir).resolve()
     reqs = {r["request_id"]: r for r in map(json.loads, open(out / "requests.jsonl", encoding="utf8"))}
     requests_sha = hashlib.sha256((out / "requests.jsonl").read_bytes()).hexdigest()
-    preds = {}
+    preds, selected = {}, {}
+    suffix = "_smoke" if args.smoke else ""
     for model in NAMES:
-        path = out / f"predictions_{model}.jsonl"
+        path = out / f"predictions_{model}{suffix}.jsonl"
         if path.exists():
             meta = path.with_name(path.name + ".meta.json")
             recorded = json.loads(meta.read_text()).get("requests_sha256") if meta.exists() else None
@@ -128,26 +129,44 @@ def cmd_report(args):
                       + ("" if meta.exists() else f" ({meta.name} is missing)"))
                 continue
             preds[model] = {p["request_id"]: p for p in lh_core.read_jsonl_readonly(path)[0] if p.get("status") == "ok"}
+            # a smoke run covers only the requests its --stride selected; score each model against its own selection
+            selected[model] = {r["request_id"] for r in load_requests(out, json.loads(meta.read_text()).get("stride", 1))}
     if not preds:
-        sys.exit("no predictions found")
+        sys.exit(f"no {'smoke-test ' if args.smoke else ''}predictions found in {out}"
+                 + ("" if args.smoke else " (for the smoke test, add --smoke)"))
     groups = {}
     for i, r in reqs.items():
         groups.setdefault((r["source"], r["k"], r["order"]), []).append(i)
     rows = []
     for (source, k, order), ids in sorted(groups.items(), key=lambda x: (SOURCES.index(x[0][0]), x[0][1], x[0][2])):
         for model, done in preds.items():
-            m = cell_metrics([(reqs[i], done[i]) for i in ids if i in done])
-            rows.append({"source": source, "k": k, "order": order, "model": NAMES[model], "complete": m["n"] == len(ids), "n": m["n"], "n_expected": len(ids),
-                         "recall": sum(reqs[i]["answerable"] for i in ids) / len(ids),
-                         "rank1_baseline": sum(reqs[i]["rank1_correct"] for i in ids) / len(ids),
+            mine = [i for i in ids if i in selected[model]]
+            m = cell_metrics([(reqs[i], done[i]) for i in mine if i in done])
+            rows.append({"source": source, "k": k, "order": order, "model": NAMES[model], "complete": m["n"] == len(mine), "n": m["n"], "n_expected": len(mine),
+                         "recall": sum(reqs[i]["answerable"] for i in mine) / len(mine) if mine else float("nan"),
+                         "rank1_baseline": sum(reqs[i]["rank1_correct"] for i in mine) / len(mine) if mine else float("nan"),
                          "acc_overall": m["acc_all"], "acc_when_answerable": m["acc"], "brier_answerable": m["brier"], "ece_answerable": m["ece"]})
-    with open(out / "ranking_results.csv", "w", newline="") as fh:
+    # pooled over sources and k: the per-cell tables of a smoke run hold only a few requests each
+    summary = []
+    for model, done in preds.items():
+        for order in ORDERS:
+            items = [(reqs[i], done[i]) for i in sorted(selected[model]) if i in done and reqs[i]["order"] == order]
+            m = cell_metrics(items)
+            ties = sum(sorted(p["probabilities"].values())[-1] == sorted(p["probabilities"].values())[-2] for _, p in items)
+            n_exp = sum(reqs[i]["order"] == order for i in selected[model])
+            summary.append((NAMES[model], order, m, n_exp, ties))
+    print(f"{'model':<11} {'order':<9} {'n ok':>9} {'acc overall':>11} {'acc|present':>11} {'tied top':>8}")
+    for name, order, m, n_exp, ties in summary:
+        print(f"{name:<11} {order:<9} {m['n']:>4}/{n_exp:<4} {m['acc_all']:>11.3f} {m['acc']:>11.3f} {ties:>8}")
+    with open(out / f"ranking_results{suffix}.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    md = ["# Decision models on retrieval rankings (no notes, bare codes)", "",
+    md = ["# Decision models on retrieval rankings (no notes, bare codes)" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
           "Evaluation design note: options are bare codes with no description. The context is the entity text plus its expansion.",
-          "Acc overall counts items whose reference code is not in the list as wrong; Acc | present, Brier and ECE use only items where it is present.", ""]
+          "Acc overall counts items whose reference code is not in the list as wrong; Acc | present, Brier and ECE use only items where it is present.", "",
+          "## Summary (all sources and k pooled)", "", "| Model | Order | n ok | Acc overall | Acc \\| present | Tied top |", "|---|---|---|---|---|---|"]
+    md += [f"| {name} | {order} | {m['n']}/{n_exp} | {m['acc_all']:.3f} | {m['acc']:.3f} | {ties} |" for name, order, m, n_exp, ties in summary] + [""]
     for order in ORDERS:
         md += [f"## Option order: {order}", "", "| Source | Top-k | Model | Recall | Always rank 1 | Acc overall | Acc \\| present | Brier | ECE |", "|---|---|---|---|---|---|---|---|---|"]
         for r in (x for x in rows if x["order"] == order):
@@ -155,8 +174,8 @@ def cmd_report(args):
             md.append(f"| {r['source']} | {r['k']} | {r['model']}{flag} | {r['recall']:.3f} | {r['rank1_baseline']:.3f} | {r['acc_overall']:.3f} | "
                       f"{r['acc_when_answerable']:.3f} | {r['brier_answerable']:.3f} | {r['ece_answerable']:.3f} |")
         md.append("")
-    (out / "ranking_tables.md").write_text("\n".join(md) + "\n", encoding="utf8")
-    print(f"wrote {out/'ranking_results.csv'} and {out/'ranking_tables.md'}")
+    (out / f"ranking_tables{suffix}.md").write_text("\n".join(md) + "\n", encoding="utf8")
+    print(f"wrote {out/f'ranking_results{suffix}.csv'} and {out/f'ranking_tables{suffix}.md'}")
 
 
 if __name__ == "__main__":
@@ -164,5 +183,6 @@ if __name__ == "__main__":
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--src", required=True); b.add_argument("--run-dir", required=True)
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
+    r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     args = p.parse_args()
     {"build": cmd_build, "report": cmd_report}[args.cmd](args)

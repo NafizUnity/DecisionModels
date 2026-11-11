@@ -156,6 +156,13 @@ and codes only. It prints recall per source and stops if no reference code appea
 Use the `--gpu` index of a free GPU. Each model should end with `finished, N/N ok`. If some requests failed, the last line
 says how many and why; rerunning the same command retries only those.
 
+Report of the smoke test (prints a summary table; writes `ranking_tables_smoke.md` and `ranking_results_smoke.csv`):
+
+    $PY decision_eval.py report --run-dir $RUN --smoke
+
+The sample is about 190 requests per model, so the per-source tables hold only a few requests per cell (`nan` where a
+cell got none). Use it to check that the numbers are sensible, not as results.
+
 ## 5. Full run (77,196 requests per model for 1,838 entities; roughly 15 hours in total)
 
     nohup bash -c "for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run \$m --gpu 0 --run-dir $RUN --weights-dir $MODELS; done; echo ALL_DONE" > real_run.log 2>&1 &
