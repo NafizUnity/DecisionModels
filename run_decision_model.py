@@ -122,10 +122,6 @@ def cmd_build(args):
 def load_requests(run_dir, stride):
     path = Path(run_dir) / "requests.jsonl"
     rows = [json.loads(l) for l in open(path, encoding="utf8")]
-    old = [r["request_id"] for r in rows if lh_core.QUESTION_ID not in r["record"]["questions"]]
-    if old:
-        sys.exit(f"STOPPED: {len(old)} request(s) in {path} were built by an older version (question id is not "
-                 f"'{lh_core.QUESTION_ID}'); build again into a new --run-dir")
     if stride == 1:
         return rows
     # about 1 in `stride`, chosen by a hash of the request id: every order, source and k gets its share (taking every
@@ -167,7 +163,7 @@ def export_options(run_dir, model, smoke):
             p = latest.get(r["request_id"])
             if p is None:
                 continue
-            letters = list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
+            letters = list(next(iter(r["record"]["questions"].values()))["criteria"])   # the one question (older runs named it "longhealth")
             probs = p["probabilities"]
             top = max(probs.values())
             tied = sum(v == top for v in probs.values())
@@ -227,10 +223,14 @@ def cmd_worker(args):
         sys.exit(f"{out_path.name} exists without {meta_path.name}, so its requests cannot be checked; move it away or use a new --run-dir.")
     else:
         lh_core.write_json_atomic(meta_path, {"requests_sha256": requests_sha, "model": model, "stride": args.stride})
+    requests = load_requests(run_dir, args.stride)
+    old = [r["request_id"] for r in requests if lh_core.QUESTION_ID not in r["record"]["questions"]]
+    if old:   # only the models read the question; report and export work on older run folders too
+        sys.exit(f"STOPPED: {len(old)} request(s) in {run_dir / 'requests.jsonl'} were built by an older version (question id "
+                 f"is not '{lh_core.QUESTION_ID}'); build again into a new --run-dir")
     adapter = module.Adapter(spec)
     adapter.check_environment()
     adapter.load()
-    requests = load_requests(run_dir, args.stride)
     done = {r["request_id"] for r in lh_core.read_jsonl_recovering(out_path) if r.get("status") == "ok"} if out_path.exists() else set()
     todo = [r for r in requests if r["request_id"] not in done]
     lh_core.log(f"{model}: {len(requests)} requests, {len(done)} already done, {len(todo)} to run -> {out_path.name}")
