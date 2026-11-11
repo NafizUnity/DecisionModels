@@ -181,8 +181,15 @@ time-limited job stops the run, and rerunning resumes it.
 
 Writes `ranking_tables.md` and `ranking_results.csv` to the run folder.
 
-**Per-option probabilities.** Every run (smoke or full) ends by writing
-`$RUN/option_probs/<MODEL>[_smoke]_<run folder>_<UTC time>.csv` with one row per request and option:
+**Per-request results.** Every run (smoke or full) ends by writing three files to `$RUN/option_probs/`, all named
+`<MODEL>[_smoke]_<run folder>_<UTC time>`:
+
+- `.jsonl`: one self-contained record per request: the model input (`state`, `instructions`, `options` letter -> code),
+  `ground_truth` (code, letter, whether it is among the options), `prediction` (letter, code, correct), and
+  `probabilities`: every option as `{rank, letter, code, probability}`, sorted from high to low. Requests without a
+  result are included with `status` `error` (and the error type) or `not_run`. **It contains the entity text**; keep it
+  with the data.
+- `.csv`: the same probabilities, one row per request and option, ids and codes only (no entity text):
 
 | column | meaning |
 |---|---|
@@ -193,17 +200,23 @@ Writes `ranking_tables.md` and `ranking_results.csv` to the run folder.
 | `is_prediction`, `is_gt`, `answerable` | picked by the runner / the reference code / reference code is among the options |
 | `n_tied_top` | how many options share the highest probability (1 = no tie) |
 
-A `.json` file of the same name records the model revision, the run's settings, the hashes of `requests.jsonl` and the
-predictions file, and counts (including requests with a tie for the top). Each export is a new file, so earlier ones are
-kept. To write one by hand (for example after an interrupted run): `$PY run_decision_model.py export DREX --run-dir $RUN`
-(add `--smoke` for the smoke-test predictions). A full run gives about 900,000 rows (roughly 90 MB) per model.
+- `.json`: what the export holds: model revision, the run's settings, hashes of `requests.jsonl` and the predictions
+  file, and counts (including requests with a tie for the top).
+
+Each export is a new set of files, so earlier ones are kept. To write one by hand (for example for an interrupted run,
+or a run made before this export existed): `$PY run_decision_model.py export DREX --run-dir $RUN` (add `--smoke` for
+the smoke-test predictions). A full run gives about 77,000 records and 900,000 CSV rows per model.
+
+The worker's own file, `predictions_<MODEL>[_smoke].jsonl`, is what makes runs resumable: it holds the request id, the
+picked letter and code, and probabilities keyed by letter only. The input, the letter -> code mapping and the ground truth
+for each `request_id` are in `requests.jsonl`; the export joins the two.
 
 Ties: in tests, Drex often gave two options exactly the same probability (52 of 210 synthetic requests; Elephant and Clef
 none), apparently because its scores are computed at reduced precision. Check `requests_with_tied_top` in the `.json`.
 
 ## Data handling
 
-`requests.jsonl` in the run folder contains entity and query text, so keep the run folder with the data. Logs hold only counts and error types.
+`requests.jsonl` and the `option_probs/*.jsonl` exports in the run folder contain entity and query text, so keep the run folder with the data. Logs hold only counts and error types.
 The report tables hold metrics and source names only. `.gitignore` keeps `results/`, `data/` and every `*.jsonl` out of git.
 
 Option text is bare codes in this run, so scores show whether a model can pick a code without its description. Descriptions are planned as a later run.

@@ -134,9 +134,12 @@ EXPORT_COLUMNS = ("request_id", "entity_id", "source", "k", "order", "model", "p
 
 
 def export_options(run_dir, model, smoke):
-    """One timestamped CSV per call: a row per (request, option) with its probability, plus a .json sidecar describing it.
-    Reads requests.jsonl and the predictions file; writes run_dir/option_probs/<MODEL>[_smoke]_<run>_<UTC time>.csv.
-    Holds codes and ids only (no entity text). Standard library only, so it runs in the model envs and the base python."""
+    """Write two timestamped files to run_dir/option_probs/ (name <MODEL>[_smoke]_<run>_<UTC time>), plus a .json sidecar:
+      .jsonl  one self-contained record per selected request: the model input (state, question, options letter -> code),
+              the ground truth, the prediction and every option's probability (sorted high to low). Requests without a
+              result are included with their status. HOLDS ENTITY TEXT: keep it with the data, like requests.jsonl.
+      .csv    one row per (request, option): ids, codes and probabilities only, no entity text.
+    Reads requests.jsonl and the predictions file. Standard library only, so it runs in the model envs and the base python."""
     run_dir = Path(run_dir).resolve()
     pred_path = run_dir / f"predictions_{model}{'_smoke' if smoke else ''}.jsonl"
     meta_path = pred_path.with_name(pred_path.name + ".meta.json")
@@ -147,48 +150,75 @@ def export_options(run_dir, model, smoke):
     if meta.get("requests_sha256") != requests_sha:
         sys.exit(f"STOPPED: {pred_path.name} was made for a different requests.jsonl; not exporting")
     requests = load_requests(run_dir, meta.get("stride", 1))
-    latest = {}
+    latest, last_error = {}, {}
     for row in lh_core.read_jsonl_readonly(pred_path)[0]:
         if row.get("status") == "ok":
             latest[row["request_id"]] = row          # a later ok row for the same request wins
+        else:
+            last_error[row["request_id"]] = row
+    revision = json.loads((HERE / "revisions.lock.json").read_text())["models"].get(model, {}).get("revision")
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out = run_dir / "option_probs" / f"{model}{'_smoke' if smoke else ''}_{run_dir.name}_{stamp}.csv"
+    out_jsonl = out.with_suffix(".jsonl")
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(out.name + ".tmp")
+    tmp, tmp_jsonl = out.with_name(out.name + ".tmp"), out_jsonl.with_name(out_jsonl.name + ".tmp")
     n_rows = n_req = n_tied = 0
-    with open(tmp, "w", newline="", encoding="utf8") as f:
+    with open(tmp, "w", newline="", encoding="utf8") as f, open(tmp_jsonl, "w", encoding="utf8") as fj:
         w = csv.writer(f)
         w.writerow(EXPORT_COLUMNS)
         for r in requests:
+            question = next(iter(r["record"]["questions"].values()))   # the one question (older runs named it "longhealth")
+            letters = list(question["criteria"])
+            entity_id = r.get("entity_id", r["request_id"].split("|")[0])
+            record = {"request_id": r["request_id"], "entity_id": entity_id, "source": r.get("source", ""), "k": r["k"],
+                      "order": r["order"], "model": model, "model_revision": revision,
+                      "input": {"state": r["record"]["state"], "instructions": question["instructions"],
+                                "options": dict(question["criteria"])},
+                      "ground_truth": {"code": r["gt_code"], "letter": r["gt_letter"], "answerable": bool(r["answerable"]),
+                                       "retriever_rank1_correct": r.get("rank1_correct")}}
             p = latest.get(r["request_id"])
             if p is None:
+                err = last_error.get(r["request_id"])
+                record.update(status=err["status"] if err else "not_run",
+                              error={k: err.get(k) for k in ("error_type", "failure_class")} if err else None)
+                fj.write(json.dumps(record, ensure_ascii=False) + "\n")
                 continue
-            letters = list(next(iter(r["record"]["questions"].values()))["criteria"])   # the one question (older runs named it "longhealth")
             probs = p["probabilities"]
             top = max(probs.values())
             tied = sum(v == top for v in probs.values())
             n_req += 1
             n_tied += tied > 1
-            rank = {l: i for i, l in enumerate(sorted(letters, key=lambda l: (-probs[l], letters.index(l))), 1)}
+            ranked = sorted(letters, key=lambda l: (-probs[l], letters.index(l)))
+            rank = {l: i for i, l in enumerate(ranked, 1)}
+            record.update(status="ok",
+                          prediction={"letter": p["prediction_letter"], "code": p["prediction_code"],
+                                      "correct": p["prediction_code"] == r["gt_code"]},
+                          probabilities=[{"rank": rank[l], "letter": l, "code": question["criteria"][l], "probability": probs[l]}
+                                         for l in ranked],
+                          n_tied_top=tied, latency_s=p.get("latency_s"))
+            fj.write(json.dumps(record, ensure_ascii=False) + "\n")
             for pos, (letter, code) in enumerate(zip(letters, r["codes"]), 1):
-                w.writerow((r["request_id"], r.get("entity_id", r["request_id"].split("|")[0]), r.get("source", ""), r["k"],
+                w.writerow((r["request_id"], entity_id, r.get("source", ""), r["k"],
                             r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter],
                             int(letter == p["prediction_letter"]), int(code == r["gt_code"]), int(bool(r["answerable"])), tied))
                 n_rows += 1
     os.replace(tmp, out)
-    revision = json.loads((HERE / "revisions.lock.json").read_text())["models"].get(model, {}).get("revision")
+    os.replace(tmp_jsonl, out_jsonl)
     lh_core.write_json_atomic(out.with_suffix(".json"), {
-        "file": out.name, "model": model, "model_revision": revision, "run_dir": run_dir.name, "smoke": smoke,
-        "stride": meta.get("stride", 1), "created_utc": stamp, "requests_sha256": requests_sha,
-        "predictions_sha256": hashlib.sha256(pred_path.read_bytes()).hexdigest(),
+        "files": {"jsonl": out_jsonl.name, "csv": out.name}, "model": model, "model_revision": revision,
+        "run_dir": run_dir.name, "smoke": smoke, "stride": meta.get("stride", 1), "created_utc": stamp,
+        "requests_sha256": requests_sha, "predictions_sha256": hashlib.sha256(pred_path.read_bytes()).hexdigest(),
         "requests_selected": len(requests), "requests_exported": n_req, "requests_without_result": len(requests) - n_req,
-        "requests_with_tied_top": n_tied, "rows": n_rows, "columns": list(EXPORT_COLUMNS),
+        "requests_with_tied_top": n_tied, "csv_rows": n_rows, "csv_columns": list(EXPORT_COLUMNS),
+        "jsonl_contains_entity_text": True,
         "notes": {"position": "1-based place the option was shown in (A=1)",
-                  "probability": "normalized probability as given to the scorer (repr of the float, full precision)",
-                  "prob_rank": "1 = highest probability; ties broken by position, the same rule that picks the prediction",
+                  "probability": "normalized probability as given to the scorer (full float precision)",
+                  "prob_rank / rank": "1 = highest probability; ties broken by position, the same rule that picks the prediction",
                   "is_prediction": "the option the runner picked (highest probability, earliest position on a tie)",
-                  "n_tied_top": "how many options share the highest probability (1 = no tie)"}})
-    lh_core.log(f"{model}: exported {n_req} requests ({n_rows} option rows, {n_tied} with a tie for the top) -> {out}")
+                  "n_tied_top": "how many options share the highest probability (1 = no tie)",
+                  "jsonl status": "ok, error (last failure kept in 'error') or not_run"}})
+    lh_core.log(f"{model}: exported {n_req}/{len(requests)} requests ({n_tied} with a tie for the top) -> {out_jsonl.name} "
+                f"(with input text) and {out.name} (codes only) in {out.parent}")
     return out
 
 
