@@ -199,5 +199,11 @@ Met while setting up on the Gemini HPC cluster (Ubuntu 24.04, Lmod modules, hosp
 | `Hugging Face token file: MISSING` | no `hf auth login` | harmless: the repos are public, and `--hf-cache` downloads nothing |
 | `git push`: `Password authentication is not supported` | GitHub needs a personal access token, not the account password | paste a token at the password prompt |
 
+Future risk: while building OneJev, setuptools warns that `project.license` as a TOML table is deprecated and must be changed
+"by 2027-Feb-18". Installed envs are not affected. A fresh setup after that date may fail at Elephant's `setup.sh` if pip's
+newest setuptools has dropped the format and OneJev (pinned to commit 81ce62f) has not changed its `pyproject.toml`. Fix: put
+`setuptools<NN` (NN = the first release without support) in a file and rerun setup with `PIP_CONSTRAINT=/path/to/that/file`,
+which pip also applies to its build environments.
+
 If `causal-conv1d` was compiled before `TORCH_CUDA_ARCH_LIST` included `9.0`, Elephant on an H100 fails with "no kernel image
 is available". Fix: `source ~/DecisionModels/env.sh`, then `conda env remove -y -n realdata-elephant` and rerun setup.
