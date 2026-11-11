@@ -272,32 +272,27 @@ def write_comparison(out, suffix=""):
     if not rows:
         sys.exit(f"STOPPED: {out / f'ranking_results{suffix}.csv'} is empty")
     metrics = [f"hit@{k}" for k in KS] + ["mrr"]
-    labels = [f"hit@{k}" for k in KS] + ["MRR"]
     sources = [s for s in SOURCES if any(r["source"] == s for r in rows)]
-    md = ["# Model re-ranking vs the retriever's own ranking (baseline)" + (" - SMOKE TEST (not results)" if suffix else ""), "",
-          "Each cell: the model's value, then the difference from the retriever baseline on the same requests "
-          "(positive = the model is better; **bold** = better than the baseline). shuf1 = options shuffled, so the model "
-          "cannot use the retriever's order; original = retriever's order. In list = share of lists that hold the reference "
-          "code (the ceiling for every hit@k).", "",
-          "| Source | In list | Ranker | Order | n | " + " | ".join(labels) + " |"]
+    shown = [f"hit@{k}" for k in KS]
+    md = ["# Model picks vs the retriever's own ranking (baseline)" + (" - SMOKE TEST (not results)" if suffix else ""), "",
+          "top-k: share of entities whose reference code is among the picker's k highest-ranked codes. shuf1 = options "
+          "shuffled (the model cannot use the retriever's order); original = retriever's order. MRR and the differences "
+          "from the baseline are in ranking_comparison.csv.", "",
+          "| Source | Picker | " + " | ".join(f"top-{k}" for k in KS) + " |"]
     md.append(separator(md[-1]))
     flat = []
     for source in sources:
         mine = [r for r in rows if r["source"] == source]
         base = mine[0]   # every model x order of a source covers the same entities, so the retriever values agree
         ref = {m: float(base[f"retriever_{m}"]) for m in metrics}
-        md.append(f"| **{source}** | {float(base['in_list']):.3f} | **Retriever (baseline)** | - | {base['n_expected']} | "
-                  + " | ".join(f"{ref[m]:.3f}" for m in metrics) + " |")
+        md.append(f"| {source} | Retriever (baseline) | " + " | ".join(f"{ref[m]:.3f}" for m in shown) + " |")
         flat.append({"source": source, "ranker": "Retriever (baseline)", "order": "-", "n": base["n_expected"],
                      **{m: f"{ref[m]:.4f}" for m in metrics}, **{f"delta_{m}": "0" for m in metrics}})
         for order in ORDERS:
             for r in (x for x in mine if x["order"] == order):
-                cells = []
-                for m in metrics:
-                    v, d = float(r[f"model_{m}"]), float(r[f"model_{m}"]) - ref[m]
-                    cells.append(f"**{v:.3f} ({d:+.3f})**" if d > 0.0005 else f"{v:.3f} ({d:+.3f})")
                 flag = "" if r["n"] == r["n_expected"] else f" (INCOMPLETE {r['n']}/{r['n_expected']})"
-                md.append(f"|  |  | {r['model']}{flag} | {order} | {r['n']} | " + " | ".join(cells) + " |")
+                md.append(f"| {source} | {r['model']} ({order}){flag} | "
+                          + " | ".join(f"{float(r[f'model_{m}']):.3f}" for m in shown) + " |")
                 flat.append({"source": source, "ranker": r["model"], "order": order, "n": r["n"],
                              **{m: f"{float(r[f'model_{m}']):.4f}" for m in metrics},
                              **{f"delta_{m}": f"{float(r[f'model_{m}']) - ref[m]:+.4f}" for m in metrics}})
