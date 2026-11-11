@@ -249,6 +249,25 @@ Ties: Drex can give two options exactly the same probability, apparently because
 precision (frequent on synthetic codes, none in the first real smoke test). The report's `tied` column and
 `requests_with_tied_top` in the `.json` count them.
 
+## 7. Before a run with code descriptions: check the index (CPU, reads only)
+
+    $PY check_descriptions.py --data "$DATA" --index /path/to/icd_snomed_index.jsonl \
+        --weights-dir $MODELS --bare-run $RUN --out desc_check.json [--show-examples]
+
+PASS/WARN/FAIL per check; exit code 1 on any FAIL. It checks:
+- **A, the index:** it parses, has no duplicate codes, no empty descriptions or odd characters, and shows the code format.
+- **B, coverage:** how many list codes and reference codes have a description, matched exactly, after normalising
+  dots/case/spaces, or only through a hierarchy parent. Missing codes are printed (bare codes only).
+- **C, duplicates:** lists where two codes share one description.
+- **D, rendering:** each model's exact input for a made-up request (only with `--show-examples`).
+- **E, tokens:** tokens per request, bare and with descriptions, counted with each model's own prompt code in its
+  conda env on CPU, against the limits (Elephant 32,768; Drex and Clef 16,000).
+- **F, consistency and time:** the data matches the bare-code run, plus a rough run-time estimate from its latencies.
+- **G, exact matches:** entities whose text equals their reference description.
+
+Entity text is never printed or saved; `desc_check.json` holds counts only. `--stride N` counts tokens for every Nth
+request only.
+
 ## Data handling
 
 `requests.jsonl` and the `option_probs/*.jsonl` exports in the run folder contain entity and query text, so keep the run folder with the data. Logs hold only counts and error types.
