@@ -12,7 +12,7 @@ Everything runs locally. Models are downloaded once during setup, and inference 
 - GPU with free VRAM: 22 GB (Elephant-1), 60 GB (Clef), 58 GB (Drex). Models run one at a time.
 - Disk: 150-200 GB (about 120 GB of weights, plus three conda envs).
 - conda, git, an NVIDIA driver 580 or newer (Clef's and Drex's torch builds are CUDA 13.0 and 13.2; Elephant's is 12.8),
-  and a base Python with numpy and pandas.
+  and any Python 3.10+ to run the commands (the system `python3` is enough; no packages needed).
 - Internet for setup only: Hugging Face (run `hf auth login` if needed), GitHub, PyTorch package index, conda channels.
 - Nothing else: setup starts from scratch on a new server (conda envs `realdata-elephant`, `realdata-clef`, `realdata-drex`,
   packages, GitHub clones and checkpoints), using only this folder. `setup-envs` needs `--project-dir`; runs need `--weights-dir`.

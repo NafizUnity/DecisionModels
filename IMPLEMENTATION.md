@@ -327,7 +327,7 @@ Each adapter also converts its model's own "input too long" error into `Overlong
 
 - [load_lock](main.py#L78), [find_conda](main.py#L111), [cmd_setup_envs](main.py#L139): Stage A.
 - [resolve_env_python](main.py#L117), [clean_env](main.py#L133), [gpu_free_gb](main.py#L371): used by the launcher.
-- `main.py` imports numpy and pandas at the top, which is why the base Python needs them.
+- `main.py` imports numpy and pandas only if they are installed; just its LongHealth commands (`build-frozen`, `compare`) use them, so RealData runs on a plain `python3`.
 
 ---
 

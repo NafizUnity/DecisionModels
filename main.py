@@ -27,8 +27,11 @@ import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+try:   # only the LongHealth commands (build-frozen, compare) use these; RealData's setup-envs and run need neither
+    import numpy as np
+    import pandas as pd
+except ImportError:
+    np = pd = None
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
