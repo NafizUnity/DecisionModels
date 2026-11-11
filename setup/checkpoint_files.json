@@ -1,0 +1,400 @@
+{
+ "created_utc": "2026-11-10T21:57:24Z",
+ "models": {
+  "baselabs/elephant-1": {
+   "revision": "b3f8a93462fb1051a9de031e94a7ff380e254072",
+   "files": {
+    ".gitattributes": {
+     "size": 1624,
+     "hash": "67ae4aa6ed8e3bade1f14e17c14e8ac48f391c53",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 5475,
+     "hash": "8589c01ff0c76249b2afafc6faf61600363902fa",
+     "hash_kind": "git_blob_sha1"
+    },
+    "assets/banner.png": {
+     "size": 2071672,
+     "hash": "39a549953eb3453f3cae5dca52f195da2d5430bedf3abb65d401fbb851da1a73",
+     "hash_kind": "sha256"
+    },
+    "chat_template.jinja": {
+     "size": 7756,
+     "hash": "a585dec894e63da457d9440ec6aa7caa16d20860",
+     "hash_kind": "git_blob_sha1"
+    },
+    "config.json": {
+     "size": 3146,
+     "hash": "98295053fab64c0a71b1c2bbba06c2e31ed33cfb",
+     "hash_kind": "git_blob_sha1"
+    },
+    "constraints.txt": {
+     "size": 1416,
+     "hash": "d5bbbdf8baf9a81153bf1aae0ddbb98ecfd91011",
+     "hash_kind": "git_blob_sha1"
+    },
+    "engine.py": {
+     "size": 2799,
+     "hash": "a4e20f94387e9fe35c8ab6d9842a9f70e40122bd",
+     "hash_kind": "git_blob_sha1"
+    },
+    "generation_config.json": {
+     "size": 116,
+     "hash": "5db0e6e75e3df4676fba6e8e0cd836f1b125e862",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model.safetensors": {
+     "size": 18819722392,
+     "hash": "682f02348dfe4617dd21bba2915c12e805de8cf16327a61e895a831ea681d0ba",
+     "hash_kind": "sha256"
+    },
+    "processor_config.json": {
+     "size": 1220,
+     "hash": "43c4343ec493f200e452f87a7c6649ecdfcce1ac",
+     "hash_kind": "git_blob_sha1"
+    },
+    "readout.json": {
+     "size": 63,
+     "hash": "444b7bf8313d43415e97988a79740a93154fdd3b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "serve.patch": {
+     "size": 41045,
+     "hash": "7a432e8d254a9838b04ca3a155547ec3b3c70e78",
+     "hash_kind": "git_blob_sha1"
+    },
+    "setup.sh": {
+     "size": 1285,
+     "hash": "1d00a2676f8f1da5d25295bf727a85491ff95d51",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 19989339,
+     "hash": "a5cd9732badce41de57e6efce8302930ded1c1188c5f81feb2bd6c24c4a1941f",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 1505,
+     "hash": "a60ae1a905ad7a2edaa995dbb0fc81a1c4fc42ee",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "Cloudflare/clef": {
+   "revision": "cfddda043dd190ef3b01cff449d5ee8cff1e8ec6",
+   "files": {
+    ".eval_results/Cloudflare__clef.yaml": {
+     "size": 1112,
+     "hash": "bc50e2f38e14dfe6207454aeb7ffa2332556e553",
+     "hash_kind": "git_blob_sha1"
+    },
+    ".eval_results/safeagents-judge-bench.yaml": {
+     "size": 1155,
+     "hash": "05bbf8d9596e0a3fe9e8009f0f396ff8a7e95ca6",
+     "hash_kind": "git_blob_sha1"
+    },
+    ".gitattributes": {
+     "size": 1570,
+     "hash": "52373fe24473b1aa44333d318f578ae6bf04b49b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "LICENSE": {
+     "size": 11544,
+     "hash": "f938136e3adacfd92be087f6e113b5d6d97f678f",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 11105,
+     "hash": "5bf8da1926c6708c101db76502ba320200bad5d6",
+     "hash_kind": "git_blob_sha1"
+    },
+    "chat_template.jinja": {
+     "size": 8952,
+     "hash": "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3",
+     "hash_kind": "git_blob_sha1"
+    },
+    "config.json": {
+     "size": 3688,
+     "hash": "924bcf0ac4f4d792dc7aa6b44b93774bfc4da473",
+     "hash_kind": "git_blob_sha1"
+    },
+    "generation_config.json": {
+     "size": 214,
+     "hash": "bfbe4ce905a96d5dd4daec54ce29ca2b7213de64",
+     "hash_kind": "git_blob_sha1"
+    },
+    "joint_head.safetensors": {
+     "size": 256125024,
+     "hash": "a010ac04f078e699988e4049cbea5e62c962393f59fec366640b64e8d69a4953",
+     "hash_kind": "sha256"
+    },
+    "joint_head_config.json": {
+     "size": 119,
+     "hash": "2268d622cd61bc87af4d8dc1a0548585b9bfef6c",
+     "hash_kind": "git_blob_sha1"
+    },
+    "joint_schema_model.py": {
+     "size": 23263,
+     "hash": "6a3ac5fc030a3f33f7fa860a1271886b64a6606d",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model-00001-of-00012.safetensors": {
+     "size": 2542796928,
+     "hash": "54d83c1d36631de231876217a8e0c2483eccee8746369a482b79442bdfc5d958",
+     "hash_kind": "sha256"
+    },
+    "model-00002-of-00012.safetensors": {
+     "size": 4842451920,
+     "hash": "464086af08be8e2ec14960a4dcff083ebc39974ade00d79d35497385f960ab3a",
+     "hash_kind": "sha256"
+    },
+    "model-00003-of-00012.safetensors": {
+     "size": 4965227944,
+     "hash": "092212d3a02fafacd6424723eda59d60e5282d2068d68f0e37cb891f63bbb658",
+     "hash_kind": "sha256"
+    },
+    "model-00004-of-00012.safetensors": {
+     "size": 4912819264,
+     "hash": "d06ff197668c782145fafa74bba61bbc296fb27e39afb15fd522918ce3514dc5",
+     "hash_kind": "sha256"
+    },
+    "model-00005-of-00012.safetensors": {
+     "size": 4986198544,
+     "hash": "cc693b8829614a72e0c2be303fb290cf05dbb4d7ded872a817b97bb222a78427",
+     "hash_kind": "sha256"
+    },
+    "model-00006-of-00012.safetensors": {
+     "size": 4912819320,
+     "hash": "e7cce15da2443cb8b84aaed66a9a71f0c87dc9d043f83b5f58f4a89f64ba60ad",
+     "hash_kind": "sha256"
+    },
+    "model-00007-of-00012.safetensors": {
+     "size": 4932703272,
+     "hash": "75fc7e76b57d5d17a5d85fff3e879d07dd33edc885a8ee04ad437a899bcd5307",
+     "hash_kind": "sha256"
+    },
+    "model-00008-of-00012.safetensors": {
+     "size": 4966314576,
+     "hash": "189b15cb6b1af48d5f118951446e15639bfeaf76081d5f20aed1f1b4253afe1d",
+     "hash_kind": "sha256"
+    },
+    "model-00009-of-00012.safetensors": {
+     "size": 4964162248,
+     "hash": "8101e2664bb14684fc7051f2e1f84903dbdf5489b17cae3212ac08a0af744a60",
+     "hash_kind": "sha256"
+    },
+    "model-00010-of-00012.safetensors": {
+     "size": 4933789824,
+     "hash": "a8e69016a1a8dab1c9ce8dd151c0d3224412ab864cf06d3a5e2b8a5775cfdfb8",
+     "hash_kind": "sha256"
+    },
+    "model-00011-of-00012.safetensors": {
+     "size": 4965228032,
+     "hash": "b328d21c36ab384696e40a30ac86a95aaf6dd82da89438ba009cb97d87c1d6b9",
+     "hash_kind": "sha256"
+    },
+    "model-00012-of-00012.safetensors": {
+     "size": 2789094896,
+     "hash": "7505eed910a84ea18e66953572476f8a8a6a6ef54192a6643d6e9cd21a3bb978",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors.index.json": {
+     "size": 111110,
+     "hash": "cc8da4e682c8b7483cd9c2c21a221188d547c26b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "processor_config.json": {
+     "size": 1191,
+     "hash": "33818c7f9e991ad735fd240209f4fa73e6c28c50",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 19989325,
+     "hash": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 1075,
+     "hash": "0f19934ef65115549ff9629ff2c83d15e40e32d8",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "nace-ai/drex-max-v1": {
+   "revision": "a67fa2808b5d91a4db62629beb14eba6d3f3e53c",
+   "files": {
+    ".gitattributes": {
+     "size": 1621,
+     "hash": "3f980ced3cf1d3eacdac9051c1daf450db81a517",
+     "hash_kind": "git_blob_sha1"
+    },
+    "LICENSE": {
+     "size": 12046,
+     "hash": "a42ca548a2409947766773e37855157390c2a94a",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 14641,
+     "hash": "601e366acf1ceb5bcea3c55598ccea74f704da35",
+     "hash_kind": "git_blob_sha1"
+    },
+    "areas.png": {
+     "size": 17685,
+     "hash": "82378fb638c1561c30ced728ed2f70c1d47c6225",
+     "hash_kind": "git_blob_sha1"
+    },
+    "areas.svg": {
+     "size": 5206,
+     "hash": "f6edd226c44262f99b6bf6ea4bb9177b9c480c17",
+     "hash_kind": "git_blob_sha1"
+    },
+    "artificial_analysis_decision_index.png": {
+     "size": 52358,
+     "hash": "0186b50f1f25abee077310b735be6bff90a76a9a",
+     "hash_kind": "git_blob_sha1"
+    },
+    "chat_template.jinja": {
+     "size": 8952,
+     "hash": "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3",
+     "hash_kind": "git_blob_sha1"
+    },
+    "code/drex_max/__init__.py": {
+     "size": 108,
+     "hash": "ef17b4e348c1ca37236e9265c339da7796dd63fd",
+     "hash_kind": "git_blob_sha1"
+    },
+    "code/drex_max/model.py": {
+     "size": 9817,
+     "hash": "bc675dfe56bc5a18981347c6538891223177498c",
+     "hash_kind": "git_blob_sha1"
+    },
+    "code/drex_max/types.py": {
+     "size": 929,
+     "hash": "6826e1189a2aa14497a825bb3411394a1f48ee3a",
+     "hash_kind": "git_blob_sha1"
+    },
+    "config.json": {
+     "size": 3757,
+     "hash": "677de5385197b35cec876101d24f574114feac6b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "decision_config.json": {
+     "size": 5411,
+     "hash": "0aca3ac7b58edc8a69010e624a05c882cc33f380",
+     "hash_kind": "git_blob_sha1"
+    },
+    "decision_index.png": {
+     "size": 13176,
+     "hash": "78075dedb66f783c2fb2dd1d6bb81e68f1c1351c",
+     "hash_kind": "git_blob_sha1"
+    },
+    "decision_index.svg": {
+     "size": 2263,
+     "hash": "14dbe1ba7aa6221e1ed312cad76d5d101fc45f8b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "inference.py": {
+     "size": 1477,
+     "hash": "e83d41d9d95b8b473bca94e05b3fcd69150dae9b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model-00001-of-00011.safetensors": {
+     "size": 4997471976,
+     "hash": "daf7b1ca4bbfabd39e2c23d2e209a7c5c7b95b5f57b629e37e2a65788cc39930",
+     "hash_kind": "sha256"
+    },
+    "model-00002-of-00011.safetensors": {
+     "size": 4965144568,
+     "hash": "125a9d6609972fec5d5a685d7b8408f751685475ac2a9b700ae2ed9ecc475276",
+     "hash_kind": "sha256"
+    },
+    "model-00003-of-00011.safetensors": {
+     "size": 4933789248,
+     "hash": "209b8d00fa5ef56c6b05e7c18536110a6f467ce038e1cb179f5b6e39a1a2c9b9",
+     "hash_kind": "sha256"
+    },
+    "model-00004-of-00011.safetensors": {
+     "size": 4965227496,
+     "hash": "3cc500d71eef661702ca5153c3de5a49118bc562c3853458ca798694ca07f2b7",
+     "hash_kind": "sha256"
+    },
+    "model-00005-of-00011.safetensors": {
+     "size": 4974750552,
+     "hash": "24c83dcd56072043457ce260d462df3f4dfefbd2dc97ff2091558fdfa1de78e6",
+     "hash_kind": "sha256"
+    },
+    "model-00006-of-00011.safetensors": {
+     "size": 4924266240,
+     "hash": "462dd9c1716edc8da28a1acd85c5098ea297e8fb144e0963221efd0fd77726f6",
+     "hash_kind": "sha256"
+    },
+    "model-00007-of-00011.safetensors": {
+     "size": 4974750560,
+     "hash": "dca06f876f8eb096005a76c137c71b777fbd981614f4e7d2ad5b20dc6ebbf0d3",
+     "hash_kind": "sha256"
+    },
+    "model-00008-of-00011.safetensors": {
+     "size": 4902229944,
+     "hash": "15a112dc5ddf20087e66b97c6070256a29c33d86fd899d107e88e1d041ad5b89",
+     "hash_kind": "sha256"
+    },
+    "model-00009-of-00011.safetensors": {
+     "size": 4996786840,
+     "hash": "4847969c29be7118f21dea24c71da9a4f00b7c9f1d4c8dbc486fc987cc212471",
+     "hash_kind": "sha256"
+    },
+    "model-00010-of-00011.safetensors": {
+     "size": 4902229960,
+     "hash": "6e9110bb4c6ca954fe3f87b34896aca52eda3e5426dc84d5932089504652ec24",
+     "hash_kind": "sha256"
+    },
+    "model-00011-of-00011.safetensors": {
+     "size": 2634155256,
+     "hash": "c7cd2b2ba941b1800c33c39df4988db183ac5436b9251e3246d07233d5266460",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors.index.json": {
+     "size": 103954,
+     "hash": "d8b3102fa62fdb8e4ed1befb8ce04864ad8cfce8",
+     "hash_kind": "git_blob_sha1"
+    },
+    "processor_config.json": {
+     "size": 1219,
+     "hash": "5bbb53bba97f903f41846cb7e1ab2ba3a98cd54c",
+     "hash_kind": "git_blob_sha1"
+    },
+    "readout.safetensors": {
+     "size": 2611288,
+     "hash": "07da793ebd872bb22c7dc68f97ce94b91e9991ddd0548d92a81288880eb2435b",
+     "hash_kind": "sha256"
+    },
+    "requirements.txt": {
+     "size": 165,
+     "hash": "741bae73ff91f0efc8ac48943d026f7706bfeba3",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 19989492,
+     "hash": "6f32ce20dc35f57a7f9ad1eac03525bd7d30f9df8cea6507e958279cc3657706",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 1165,
+     "hash": "48e883d93941a5b318ea53dcac02d96fa23b599e",
+     "hash_kind": "git_blob_sha1"
+    },
+    "vision.png": {
+     "size": 35188,
+     "hash": "1c1df7dad819a0425746093ae4b6cb05eb03d40f",
+     "hash_kind": "git_blob_sha1"
+    },
+    "vision.svg": {
+     "size": 4841,
+     "hash": "d8a16ee376caffbf6aaa2e333bf91c06fe24a41a",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,24 @@
+{
+  "created_utc": "2026-11-09T02:12:32.041870+00:00",
+  "models": {
+    "ELEPHANT": {
+      "repo": "baselabs/elephant-1",
+      "revision": "b3f8a93462fb1051a9de031e94a7ff380e254072"
+    },
+    "CLEF": {
+      "repo": "Cloudflare/clef",
+      "revision": "cfddda043dd190ef3b01cff449d5ee8cff1e8ec6"
+    },
+    "DREX": {
+      "repo": "nace-ai/drex-max-v1",
+      "revision": "a67fa2808b5d91a4db62629beb14eba6d3f3e53c",
+      "runtime_url": "https://github.com/nace-ai/drex-decision-models.git",
+      "runtime_revision": "d2fd26cdf211f87b9a6b1261995528629c9e1401"
+    }
+  },
+  "longhealth": {
+    "revision": "479922279ce8fa528fe2cd87d854c6a2f8365d21",
+    "dataset_sha256": "82d34d9da47ab279d7aa89a6bdf298c0ac79f1e506e1dd0a3ea69a1ad5e2cb45"
+  },
+  "note": "Elephant's OneJev runtime is pinned by the checkpoint's own setup.sh; Clef's code ships inside its checkpoint."
+}

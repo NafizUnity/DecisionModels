@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+# Run outputs and data: requests.jsonl and predictions hold entity text, keep them off the repo
+results/
+data/
+*.jsonl
+*.jsonl.tmp
+*.lock
+*.meta.json
+*.log
+setup_logs/
