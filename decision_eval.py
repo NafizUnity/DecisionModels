@@ -1,6 +1,7 @@
 """No-notes evaluation on retrieval-ranking files (keys: entity_id, entity_text, query_text, ground_truth_codes, rankings{source: [codes]}).
 
   python decision_eval.py build --src FILE.json --run-dir results/NAME       # requests.jsonl (contains entity text; keep it with the data)
+      [--descriptions icd_snomed_index.jsonl]                                 # options carry each code's long description
   python run_decision_model.py run ELEPHANT --gpu 1 --run-dir results/NAME   # one model at a time, resumable
   python decision_eval.py report --run-dir results/NAME [--smoke]            # tables in results/NAME
 
@@ -9,6 +10,9 @@ then taken from the model's own probabilities: hit@k = the reference code is amo
 retriever's hit@k on the same lists is the baseline. Each option's key is the code itself with no description, so the
 models see e.g. "A. E11.9" (Elephant), "A: E11.9" (Drex), {"option_id": "E11.9"} (Clef, which sorts options by key, so
 its input does not depend on the order). Original order is the pipeline as ranked; shuf1 removes position as a cue.
+With --descriptions, each option's value is the code's long_description (short_description when long is empty), so the
+models see "A. E119: Type 2 diabetes ..." / "A: E119: ..." / {"description": "...", "option_id": "E119"}; every model
+adds the code itself. check_descriptions.py checks an index before such a build.
 """
 import argparse
 import csv
@@ -80,6 +84,29 @@ def validate(data):
     return problems
 
 
+def load_descriptions(path):
+    """code -> long_description (short_description when long is empty), whitespace collapsed. Stops on a bad line,
+    a record without a code or description, or a code listed twice with different text."""
+    desc = {}
+    with open(path, encoding="utf8") as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                sys.exit(f"STOPPED: {path} line {n} is not JSON; nothing was written")
+            code = rec.get("code") if isinstance(rec, dict) else None
+            text = next((" ".join(t.split()) for t in (rec.get("long_description"), rec.get("short_description"))
+                         if isinstance(t, str) and t.strip()), None) if code else None
+            if not isinstance(code, str) or not text:
+                sys.exit(f"STOPPED: {path} line {n} has no code or no description; nothing was written")
+            if desc.get(code, text) != text:
+                sys.exit(f"STOPPED: {path} lists {code} twice with different descriptions; nothing was written")
+            desc[code] = text
+    return desc
+
+
 def cmd_build(args):
     data = json.load(open(args.src, encoding="utf8"))
     out = Path(args.run_dir).resolve()
@@ -90,6 +117,13 @@ def cmd_build(args):
         for line in problems[:30]:
             print("  " + line)
         sys.exit(f"STOPPED: {len(problems)} problem(s) in {args.src} (first {min(30, len(problems))} above); nothing was written")
+    desc = load_descriptions(args.descriptions) if args.descriptions else None
+    option_text = "long_description" if desc else "code"
+    if desc:
+        missing = sorted({c for d in data for s in SOURCES for c in d["rankings"][s] if c not in desc})
+        if missing:
+            sys.exit(f"STOPPED: {len(missing)} list code(s) have no description in {args.descriptions} "
+                     f"(first: {missing[:20]}); run check_descriptions.py. Nothing was written")
     rows = []
     lengths = {source: [] for source in SOURCES}
     retr_rank = {source: [] for source in SOURCES}
@@ -108,9 +142,10 @@ def cmd_build(args):
                              "n_options": len(codes), "gt_code": gt, "answerable": rank is not None,
                              "gt_letter": gt if rank is not None else None,     # the option key of the reference code
                              "gt_position": codes.index(gt) + 1 if rank is not None else None,
-                             "retriever_rank": rank, "rank1_correct": rank == 1, "codes": codes,
+                             "retriever_rank": rank, "rank1_correct": rank == 1, "codes": codes, "option_text": option_text,
                              "record": {"state": state, "questions": {lh_core.QUESTION_ID: {
-                                 "type": "choice", "instructions": QUESTION, "criteria": {c: None for c in codes}}}}})
+                                 "type": "choice", "instructions": QUESTION,
+                                 "criteria": {c: desc[c] if desc else None for c in codes}}}}})
     print(f"{len(data)} entities. Every request holds a source's whole ranking. Retriever: share of entities with the "
           f"reference code within its top k:")
     print(f"  {'source':<16} {'codes min/median/max':>20}  " + "  ".join(f"@{k:<4}" for k in KS) + "  in list")
@@ -128,6 +163,12 @@ def cmd_build(args):
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     tmp.replace(out / "requests.jsonl")
+    sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()   # noqa: E731
+    lh_core.write_json_atomic(out / "build_meta.json", {
+        "src": str(Path(args.src).resolve()), "src_sha256": sha(args.src), "option_text": option_text,
+        "descriptions": str(Path(args.descriptions).resolve()) if desc else None,
+        "descriptions_sha256": sha(args.descriptions) if desc else None, "requests": len(rows)})
+    print(f"options: {'code + ' + option_text if desc else 'bare codes'}")
     print(f"wrote {len(rows)} requests for {len(data)} entities ({sum(r['n_options'] for r in rows)} options in all) -> {out/'requests.jsonl'}")
 
 
@@ -234,7 +275,8 @@ def cmd_report(args):
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    md = ["# Decision models re-ranking whole retrieval lists (no notes, bare codes)" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
+    text = "codes with descriptions" if any(r.get("option_text", "code") != "code" for r in reqs.values()) else "bare codes"
+    md = [f"# Decision models re-ranking whole retrieval lists (no notes, {text})" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
           "Each request gives the model every code in one source's ranking. hit@k: the reference code is among the model's k most "
           "likely codes (ties go to the earlier position); requests whose list lacks the reference code count as misses. "
           "Retriever columns: the same measure for the source's own ranking on the same requests. MRR: mean of 1/rank (0 if absent). "
@@ -312,6 +354,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--src", required=True); b.add_argument("--run-dir", required=True)
+    b.add_argument("--descriptions", help="icd_snomed_index.jsonl: give every option its code's long description")
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")

@@ -268,12 +268,27 @@ PASS/WARN/FAIL per check; exit code 1 on any FAIL. It checks:
 Entity text is never printed or saved; `desc_check.json` holds counts only. `--stride N` counts tokens for every Nth
 request only.
 
+## 8. Run with code descriptions
+
+Same steps 3-6 in a new folder. The build adds `--descriptions`. It stops if any list code has no description, and
+it records both input files' sha256 in `build_meta.json`. Same entities, rankings and option orders as the bare run,
+so the two compare directly.
+
+    export INDEX=/path/to/icd_snomed_index.jsonl
+    export RUN_DESC=results/real_whole_list_desc
+    $PY decision_eval.py build --src "$DATA" --run-dir $RUN_DESC --descriptions "$INDEX"     # prints "options: code + long_description"
+    for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN_DESC --weights-dir $MODELS --stride 100; done
+    $PY decision_eval.py report --run-dir $RUN_DESC --smoke
+    nohup bash -c "for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run \$m --gpu 0 --run-dir $RUN_DESC --weights-dir $MODELS; done; echo ALL_DONE" > desc_run.log 2>&1 &
+    $PY decision_eval.py report --run-dir $RUN_DESC
+
 ## Data handling
 
 `requests.jsonl` and the `option_probs/*.jsonl` exports in the run folder contain entity and query text, so keep the run folder with the data. Logs hold only counts and error types.
 The report tables hold metrics and source names only. `.gitignore` keeps `results/`, `data/` and every `*.jsonl` out of git.
 
-Option text is bare codes in this run, so scores show whether a model can pick a code without its description. Descriptions are planned as a later run.
+Option text is bare codes in the first run (step 5), so scores show whether a model can pick a code without its
+description. The run in step 8 adds each code's long description from the index file (reference data, read on the server only).
 
 ## Issues
 
