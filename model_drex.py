@@ -48,7 +48,7 @@ class Adapter:
         self.model = DecisionModel(str(self.weights), device=self.device, load_in_8bit=self.int8)
 
     def predict(self, record):
-        question = record["questions"]["longhealth"]
+        question = record["questions"][lh_core.QUESTION_ID]
         row = {"state": record["state"], "question": question}
         try:
             probabilities = self.model.predict([row], batch_size=1, max_length=self.cfg["max_tokens"])[0]

@@ -96,7 +96,7 @@ def cmd_build(args):
                     rows.append({"request_id": f"{eid}|{source}|top_{k}|{order}", "entity_id": eid, "source": source,
                                  "k": k, "order": order, "gt_code": gt, "answerable": gt in codes,
                                  "gt_letter": letters[codes.index(gt)] if gt in codes else None, "rank1_correct": top[0] == gt, "codes": codes,
-                                 "record": {"state": state, "questions": {"longhealth": {"type": "choice", "instructions": QUESTION,
+                                 "record": {"state": state, "questions": {lh_core.QUESTION_ID: {"type": "choice", "instructions": QUESTION,
                                                                                            "criteria": dict(zip(letters, codes))}}}})
     print("recall (reference code in the top k):")
     for source in SOURCES:

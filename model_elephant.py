@@ -49,7 +49,7 @@ class Adapter:
             if isinstance(exc, ValueError) and any(m in str(exc) for m in OVERLONG_MESSAGES):
                 raise OverlongInput(str(exc)) from exc
             raise
-        result = resp.answers["longhealth"]
+        result = resp.answers[lh_core.QUESTION_ID]
         if hasattr(result, "model_dump"):
             result = result.model_dump()
         elif not isinstance(result, dict):

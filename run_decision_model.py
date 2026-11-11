@@ -72,7 +72,7 @@ def build_requests(src, with_notes=True):
                         "gt_letter": letters[codes.index(gt)] if gt in codes else None,
                         "codes": codes, "source_pick": ent["rag_outputs"][k].get("llm_icd_code"),
                         "record": {"state": state,
-                                   "questions": {"longhealth": {"type": "choice", "instructions": question, "criteria": criteria}}},
+                                   "questions": {lh_core.QUESTION_ID: {"type": "choice", "instructions": question, "criteria": criteria}}},
                     })
     return requests, data
 
@@ -121,6 +121,10 @@ def cmd_build(args):
 def load_requests(run_dir, stride):
     path = Path(run_dir) / "requests.jsonl"
     rows = [json.loads(l) for l in open(path, encoding="utf8")]
+    old = [r["request_id"] for r in rows if lh_core.QUESTION_ID not in r["record"]["questions"]]
+    if old:
+        sys.exit(f"STOPPED: {len(old)} request(s) in {path} were built by an older version (question id is not "
+                 f"'{lh_core.QUESTION_ID}'); build again into a new --run-dir")
     if stride == 1:
         return rows
     # about 1 in `stride`, chosen by a hash of the request id: every order, source and k gets its share (taking every
@@ -165,7 +169,7 @@ def cmd_worker(args):
     consecutive, t_start = 0, time.perf_counter()
     with lh_core.JsonlAppender(out_path) as sink:
         for i, r in enumerate(todo, 1):
-            choices = list(r["record"]["questions"]["longhealth"]["criteria"])
+            choices = list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
             t0 = time.perf_counter()
             row = {"request_id": r["request_id"], "model": model}
             failure = None

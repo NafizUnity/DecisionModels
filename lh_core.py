@@ -34,6 +34,8 @@ MODELS_INFO = {
              "weights_dir": "drex-max-v1", "min_vram_gb": 58, "min_vram_gb_int8": 30, "python": "3.12"},
 }
 TASKS = ("task1", "task23")
+# Name of the one question in each record. Clef writes it into its input ("ID: <name>"), so it is a neutral task name.
+QUESTION_ID = "icd10ca_code"
 EXIT_OK, EXIT_GATE, EXIT_ABORT, EXIT_ENV, EXIT_INTERRUPT, EXIT_CRASH = 0, 2, 3, 4, 130, 1
 
 
@@ -303,7 +305,7 @@ def run_job(adapter, job, examples, config_record, cfg, runs_root, stop_flag, ga
                 t0 = time.perf_counter()
                 failure = None
                 try:
-                    choices = list(ex["record"]["questions"]["longhealth"]["criteria"])
+                    choices = list(ex["record"]["questions"][QUESTION_ID]["criteria"])
                     p = normalize_probabilities(adapter.predict(ex["record"]), choices)
                     prediction = max(p, key=p.get)
                     row = {**base, "prediction": prediction, "probabilities": p, "correct": prediction in ex["gold_set"],
@@ -387,7 +389,7 @@ def known_answer_records():
         options = list(distractors)
         options.insert(gold_index, gold)
         letters = "ABCDEF"[:len(options)]
-        out.append(({"state": state, "questions": {"longhealth": {"type": "choice", "instructions": instruction,
+        out.append(({"state": state, "questions": {QUESTION_ID: {"type": "choice", "instructions": instruction,
                                                                       "criteria": dict(zip(letters, options))}}},
                     letters[gold_index]))
     return out
@@ -398,7 +400,7 @@ def gate_known_answer(adapter, min_correct=5):
     per_record, correct, first_p = [], 0, None
     records = known_answer_records()
     for record, gold in records:
-        choices = list(record["questions"]["longhealth"]["criteria"])
+        choices = list(record["questions"][QUESTION_ID]["criteria"])
         p = normalize_probabilities(adapter.predict(record), choices)
         first_p = p if first_p is None else first_p
         prediction = max(p, key=p.get)
@@ -406,7 +408,7 @@ def gate_known_answer(adapter, min_correct=5):
         per_record.append({"gold": gold, "prediction": prediction, "p_gold": round(p[gold], 4),
                            "probabilities": {k: round(v, 4) for k, v in p.items()}})
     first = records[0][0]
-    again = normalize_probabilities(adapter.predict(first), list(first["questions"]["longhealth"]["criteria"]))
+    again = normalize_probabilities(adapter.predict(first), list(first["questions"][QUESTION_ID]["criteria"]))
     deterministic = all(abs(first_p[k] - again[k]) <= 1e-3 for k in first_p)
     result = {"passed": correct >= min_correct, "n_correct": correct, "n": len(records), "min_correct": min_correct,
               "deterministic": deterministic, "per_record": per_record}
@@ -427,7 +429,7 @@ def gate_probe(adapter, examples, allow_probe_oom=False, n=3):
     for ex in longest:
         status, detail = "ok", ""
         try:
-            choices = list(ex["record"]["questions"]["longhealth"]["criteria"])
+            choices = list(ex["record"]["questions"][QUESTION_ID]["criteria"])
             normalize_probabilities(adapter.predict(ex["record"]), choices)
         except Exception as exc:
             status, detail = classify_failure(exc), repr(exc)[:500]

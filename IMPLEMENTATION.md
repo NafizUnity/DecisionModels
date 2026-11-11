@@ -242,14 +242,14 @@ It only reads files and never changes them, so it is safe to run while a model i
  "gt_code": "I500", "answerable": true, "gt_letter": "C", "rank1_correct": true,
  "codes": ["I509", "I110", "I500", "I420", "I119"],
  "record": {"state": "CHF (expanded: congestive heart failure)",
-            "questions": {"longhealth": {"type": "choice",
+            "questions": {"icd10ca_code": {"type": "choice",
                           "instructions": "Which ICD-10-CA code best matches the diagnosis described above?",
                           "criteria": {"A": "I509", "B": "I110", "C": "I500", "D": "I420", "E": "I119"}}}}}
 ```
 
 - `record` is exactly what the model receives. Everything else is bookkeeping for the report.
 - `answerable` means the ground-truth code is in these k codes. `rank1_correct` means the retriever's own first code is the ground truth.
-- The key `"longhealth"` is only the question's name, kept from the LongHealth code. It has no effect on the answer.
+- The key `"icd10ca_code"` (`lh_core.QUESTION_ID`) is the question's name. Elephant and Drex never show it to the model, but Clef writes it into its input (`ID: icd10ca_code`), so it is a neutral name for the task. Runs built before this change used `"longhealth"`; the runner refuses those request files.
 
 **`predictions_<MODEL>.jsonl`**: one line per attempt:
 
@@ -306,7 +306,7 @@ Every adapter has the same four methods that the worker calls:
 
 What `predict` does for each model:
 
-- **Elephant-1** ([predict](model_elephant.py#L45)): wraps the record in qev's `SystemOneRequest(state, questions)`, calls `DecisionEngine.decide`, and reads `answers["longhealth"]["probabilities"]`.
+- **Elephant-1** ([predict](model_elephant.py#L45)): wraps the record in qev's `SystemOneRequest(state, questions)`, calls `DecisionEngine.decide`, and reads `answers[QUESTION_ID]["probabilities"]`.
 - **Clef** ([predict](model_clef.py#L40)): `encode_record` tokenizes the record and rejects inputs over 16,000 tokens. `collate_records` makes a batch of one, and the model's logits go through a softmax, giving one probability per option.
 - **Drex Max** ([predict](model_drex.py#L50)): calls `DecisionModel.predict([{state, question}], batch_size=1)`, then `answer(...)` to map the outputs to `{letter: probability}`.
 
