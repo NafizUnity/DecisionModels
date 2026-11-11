@@ -129,8 +129,8 @@ def load_requests(run_dir, stride):
     return [r for r in rows if int(hashlib.sha256(r["request_id"].encode()).hexdigest()[:8], 16) % stride == 0]
 
 
-EXPORT_COLUMNS = ("request_id", "entity_id", "source", "k", "order", "model", "position", "option_letter", "option_code",
-                  "probability", "prob_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
+EXPORT_COLUMNS = ("request_id", "entity_id", "source", "n_options", "order", "model", "position", "option_key", "option_code",
+                  "probability", "prob_rank", "retriever_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
 
 
 def export_options(run_dir, model, smoke):
@@ -170,11 +170,15 @@ def export_options(run_dir, model, smoke):
             question = next(iter(r["record"]["questions"].values()))   # the one question (older runs named it "longhealth")
             letters = list(question["criteria"])
             entity_id = r.get("entity_id", r["request_id"].split("|")[0])
-            record = {"request_id": r["request_id"], "entity_id": entity_id, "source": r.get("source", ""), "k": r["k"],
+            n_options = r.get("n_options", r.get("k"))          # older top-k runs stored k
+            options = question["criteria"]
+            # whole-list runs key each option by its code with no description; older runs used letters -> codes
+            shown = list(options) if all(v is None for v in options.values()) else dict(options)
+            record = {"request_id": r["request_id"], "entity_id": entity_id, "source": r.get("source", ""), "n_options": n_options,
                       "order": r["order"], "model": model, "model_revision": revision,
-                      "input": {"state": r["record"]["state"], "instructions": question["instructions"],
-                                "options": dict(question["criteria"])},
-                      "ground_truth": {"code": r["gt_code"], "letter": r["gt_letter"], "answerable": bool(r["answerable"]),
+                      "input": {"state": r["record"]["state"], "instructions": question["instructions"], "options": shown},
+                      "ground_truth": {"code": r["gt_code"], "key": r["gt_letter"], "position": r.get("gt_position"),
+                                       "answerable": bool(r["answerable"]), "retriever_rank": r.get("retriever_rank"),
                                        "retriever_rank1_correct": r.get("rank1_correct")}}
             p = latest.get(r["request_id"])
             if p is None:
@@ -191,15 +195,15 @@ def export_options(run_dir, model, smoke):
             ranked = sorted(letters, key=lambda l: (-probs[l], letters.index(l)))
             rank = {l: i for i, l in enumerate(ranked, 1)}
             record.update(status="ok",
-                          prediction={"letter": p["prediction_letter"], "code": p["prediction_code"],
+                          prediction={"key": p["prediction_letter"], "code": p["prediction_code"],
                                       "correct": p["prediction_code"] == r["gt_code"]},
-                          probabilities=[{"rank": rank[l], "letter": l, "code": question["criteria"][l], "probability": probs[l]}
+                          probabilities=[{"rank": rank[l], "key": l, "code": r["codes"][letters.index(l)], "probability": probs[l]}
                                          for l in ranked],
                           n_tied_top=tied, latency_s=p.get("latency_s"))
             fj.write(json.dumps(record, ensure_ascii=False) + "\n")
             for pos, (letter, code) in enumerate(zip(letters, r["codes"]), 1):
-                w.writerow((r["request_id"], entity_id, r.get("source", ""), r["k"],
-                            r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter],
+                w.writerow((r["request_id"], entity_id, r.get("source", ""), n_options,
+                            r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter], r.get("retriever_rank", ""),
                             int(letter == p["prediction_letter"]), int(code == r["gt_code"]), int(bool(r["answerable"])), tied))
                 n_rows += 1
     os.replace(tmp, out)

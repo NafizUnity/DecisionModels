@@ -1,7 +1,19 @@
 # RealData: decision models on retrieval rankings
 
 Runs Elephant-1, Clef and Drex Max as ICD-10-CA code pickers. No clinical notes, bare codes as options.
-The context is the entity text plus its expansion from `query_text`. Compares 7 ranking sources at top-5, 10 and 20, in original and shuffled option order.
+The context is the entity text plus its expansion from `query_text`. Each request gives a model **every code in one
+source's ranking** (at most 255, the limit of all three models); top-k is then read from the model's own probabilities
+(hit@1, 5, 10, 20 and MRR) and compared with the retriever's ranking of the same list. 7 ranking sources, in original and
+shuffled option order.
+
+What the models read, for a list E119, E1165, R739 (each option's key is the code, with no description):
+
+| Elephant-1 | Drex Max | Clef |
+|---|---|---|
+| `A. E119` `B. E1165` `C. R739` | `A: E119` `B: E1165` `C: R739` | `OPTION 1: {"option_id":"E1165"}` ... |
+
+Clef sorts options by key, so it always sees them in code order: its `original` and `shuf1` inputs are identical, and so
+are its results (a built-in check).
 
 How the code works, from the big picture down to individual functions: [IMPLEMENTATION.md](IMPLEMENTATION.md).
 Problems met on a real cluster and their fixes: [Issues](#issues) at the end.
@@ -141,17 +153,19 @@ Prints counts and at most 5 unusual codes per list; no entity or query text.
 
 ## 3. Build requests
 
-    RUN=results/real_no_notes_bare_codes
+    RUN=results/real_whole_list
     $PY decision_eval.py build --src /path/to/data.json --run-dir $RUN
 
 Checks the whole file first and writes nothing if any entity has a problem (missing keys, duplicate or empty `entity_id`, empty
-`entity_text`, not exactly one ground-truth code, a missing source, fewer than 20 unique string codes). The messages name entity ids
-and codes only. It prints recall per source and stops if no reference code appears in any list (usually a code-format mismatch;
-`inspect_rankings.py` shows the formats). It also refuses a run folder that already has requests or predictions.
+`entity_text`, not exactly one ground-truth code, a missing or empty source, a code listed twice, more than 255 codes). The
+messages name entity ids and codes only. It prints, per source, the list lengths and the retriever's hit@1/5/10/20 and
+share of lists holding the reference code, and stops if no reference code appears in any list (usually a code-format
+mismatch; `inspect_rankings.py` shows the formats). It also refuses a run folder that already has requests or predictions.
+One entity gives 14 requests (7 sources x 2 orders): 25,732 per model for 1,838 entities.
 
-## 4. Smoke test (about 190 requests per model)
+## 4. Smoke test (about 260 requests per model)
 
-    for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN --weights-dir $MODELS --stride 400; done
+    for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN --weights-dir $MODELS --stride 100; done
 
 Use the `--gpu` index of a free GPU. Each model should end with `finished, N/N ok`. If some requests failed, the last line
 says how many and why; rerunning the same command retries only those.
@@ -160,10 +174,10 @@ Report of the smoke test (prints a summary table; writes `ranking_tables_smoke.m
 
     $PY decision_eval.py report --run-dir $RUN --smoke
 
-The sample is about 190 requests per model, so the per-source tables hold only a few requests per cell (`nan` where a
-cell got none). Use it to check that the numbers are sensible, not as results.
+The sample is about 260 requests per model, so the per-source tables hold only about 18 requests per cell. Use it to
+check that the numbers are sensible and to time the full run (each model logs its seconds per request), not as results.
 
-## 5. Full run (77,196 requests per model for 1,838 entities; roughly 15 hours in total)
+## 5. Full run (25,732 requests per model for 1,838 entities)
 
     nohup bash -c "for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run \$m --gpu 0 --run-dir $RUN --weights-dir $MODELS; done; echo ALL_DONE" > real_run.log 2>&1 &
     tail -f real_run.log | tr '\r' '\n' | grep --line-buffered -v "Loading weights"
@@ -172,31 +186,42 @@ Ctrl-C only stops `tail`. If interrupted, rerun the `nohup` line and it resumes.
 `requests.jsonl` it belongs to (`predictions_<MODEL>.jsonl.meta.json`); a worker refuses to resume, and `report` skips the file,
 if `requests.jsonl` has changed. Only one worker per model and run folder can run at a time.
 
-On a cluster, check that the session will last about 15 hours (for example `echo $SLURM_JOB_ID`, `squeue -u $USER`); a
-time-limited job stops the run, and rerunning resumes it.
+How long it takes depends on how long the lists are. Measured on an A100 with synthetic lists: about 0.2 s (Elephant),
+0.25 s (Drex) and 0.8 s (Clef) per request at about 70 codes, and 1.0 / 1.4 / 2.4 s at 255 codes. Estimate yours from the
+smoke test: total hours = 25,732 x (sum of the three s/request) / 3600. On a cluster, check that the session will last
+that long (for example `echo $SLURM_JOB_ID`, `squeue -u $USER`); a time-limited job stops the run, and rerunning resumes it.
 
 ## 6. Results (after ALL_DONE)
 
     $PY decision_eval.py report --run-dir $RUN
 
-Writes `ranking_tables.md` and `ranking_results.csv` to the run folder.
+Prints a summary (model x order, all sources pooled) and writes `ranking_tables.md` and `ranking_results.csv` (per
+source) to the run folder:
+
+- `hit@k`: the reference code is among the model's k most likely codes (ties go to the earlier position). Lists without
+  the reference code count as misses. hit@1 is the accuracy of the model's answer.
+- `MRR`: mean of 1 / rank of the reference code (0 if it is not in the list).
+- `retriever @k`, `retriever MRR`: the same for the source's own ranking on the same requests: the baseline to beat.
+- `In list`: share of lists holding the reference code (the ceiling for every hit@k).
+- `Acc | in list`, Brier, ECE: only requests whose list holds the reference code.
 
 **Per-request results.** Every run (smoke or full) ends by writing three files to `$RUN/option_probs/`, all named
 `<MODEL>[_smoke]_<run folder>_<UTC time>`:
 
-- `.jsonl`: one self-contained record per request: the model input (`state`, `instructions`, `options` letter -> code),
-  `ground_truth` (code, letter, whether it is among the options), `prediction` (letter, code, correct), and
-  `probabilities`: every option as `{rank, letter, code, probability}`, sorted from high to low. Requests without a
+- `.jsonl`: one self-contained record per request: the model input (`state`, `instructions`, `options`: the codes in
+  the order shown), `ground_truth` (code, position, retriever rank, whether it is in the list), `prediction` (code,
+  correct), and `probabilities`: every option as `{rank, key, code, probability}`, sorted from high to low. Requests without a
   result are included with `status` `error` (and the error type) or `not_run`. **It contains the entity text**; keep it
   with the data.
 - `.csv`: the same probabilities, one row per request and option, ids and codes only (no entity text):
 
 | column | meaning |
 |---|---|
-| `request_id`, `entity_id`, `source`, `k`, `order`, `model` | which request |
-| `position`, `option_letter`, `option_code` | where the option was shown (A = 1) and its code |
+| `request_id`, `entity_id`, `source`, `n_options`, `order`, `model` | which request |
+| `position`, `option_key`, `option_code` | where the option was shown (1 = first) and its code (the key is the code) |
 | `probability` | the model's normalized probability for this option, full precision |
 | `prob_rank` | 1 = highest; ties go to the earlier position, the same rule that picks the answer |
+| `retriever_rank` | the code's rank in the source's original ranking (for the reference code: the baseline) |
 | `is_prediction`, `is_gt`, `answerable` | picked by the runner / the reference code / reference code is among the options |
 | `n_tied_top` | how many options share the highest probability (1 = no tie) |
 
@@ -205,14 +230,18 @@ Writes `ranking_tables.md` and `ranking_results.csv` to the run folder.
 
 Each export is a new set of files, so earlier ones are kept. To write one by hand (for example for an interrupted run,
 or a run made before this export existed): `$PY run_decision_model.py export DREX --run-dir $RUN` (add `--smoke` for
-the smoke-test predictions). A full run gives about 77,000 records and 900,000 CSV rows per model.
+the smoke-test predictions). A full run gives 25,732 records per model, and one CSV row per code in every list.
 
 The worker's own file, `predictions_<MODEL>[_smoke].jsonl`, is what makes runs resumable: it holds the request id, the
-picked letter and code, and probabilities keyed by letter only. The input, the letter -> code mapping and the ground truth
-for each `request_id` are in `requests.jsonl`; the export joins the two.
+picked option and code, and the probabilities keyed by option. The input, the options and the ground truth for each
+`request_id` are in `requests.jsonl`; the export joins the two.
 
-Ties: in tests, Drex often gave two options exactly the same probability (52 of 210 synthetic requests; Elephant and Clef
-none), apparently because its scores are computed at reduced precision. Check `requests_with_tied_top` in the `.json`.
+Run folders from the earlier top-k version (5/10/20 options per request, lettered A-T) keep working with `export`;
+`report` refuses them, since their design differs.
+
+Ties: Drex can give two options exactly the same probability, apparently because its scores are computed at reduced
+precision (frequent on synthetic codes, none in the first real smoke test). The report's `tied` column and
+`requests_with_tied_top` in the `.json` count them.
 
 ## Data handling
 
