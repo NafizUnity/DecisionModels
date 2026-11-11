@@ -21,7 +21,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
-from run_decision_model import cell_metrics, load_requests, order_for  # noqa: E402
+from run_decision_model import cell_metrics, load_requests, n_tied_top, order_for, rank_options  # noqa: E402
 
 KS = (1, 5, 10, 20)          # cutoffs for hit@k, taken from the ranking over ALL options (not a cut of the input)
 MAX_OPTIONS = 255            # Elephant (schema MAX_CHOICE_OPTIONS) and Drex (255 answer labels); Clef has no fixed limit
@@ -73,6 +73,8 @@ def validate(data):
                 problems.append(f"{where}: {source} has codes that are not non-empty strings without spaces")
             elif len(set(ranking)) < len(ranking):
                 problems.append(f"{where}: {source} lists {len(ranking) - len(set(ranking))} code(s) more than once")
+            elif len(ranking) < 2:
+                problems.append(f"{where}: {source} has {len(ranking)} code; a choice needs at least 2")
             elif len(ranking) > MAX_OPTIONS:
                 problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS}")
     return problems
@@ -134,10 +136,7 @@ def model_rank(r, p):
     Ties go to the earlier position, the same rule that picks the prediction."""
     if not r["answerable"]:
         return None
-    probs, keys = p["probabilities"], list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
-    g = probs[r["gt_letter"]]
-    pos = keys.index(r["gt_letter"])
-    return 1 + sum(v > g for v in probs.values()) + sum(probs[k] == g for k in keys[:pos])
+    return rank_options(list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"]), p["probabilities"])[r["gt_letter"]]
 
 
 def hit_metrics(items):
@@ -152,15 +151,34 @@ def hit_metrics(items):
     out["model_mrr"] = sum(1 / x for x in ranks if x) / n if n else nan
     out["retriever_mrr"] = sum(1 / r["retriever_rank"] for r, _ in items if r["retriever_rank"]) / n if n else nan
     out["in_list"] = sum(r["answerable"] for r, _ in items) / n if n else nan
-    out["tied_top"] = sum(sorted(p["probabilities"].values())[-1] == sorted(p["probabilities"].values())[-2]
-                          for _, p in items if len(p["probabilities"]) > 1)
+    out["tied_top"] = sum(n_tied_top(p["probabilities"]) > 1 for _, p in items)
     return out
+
+
+def separator(header):
+    """The |---| row for a markdown header row (escaped pipes inside a cell do not count as columns)."""
+    return "|---" * (header.replace("\\|", "").count("|") - 1) + "|"
+
+
+def clef_order_check(reqs, done):
+    """Clef sorts options by key, so its original and shuf1 inputs are identical and their probabilities should match.
+    Returns (pairs compared, pairs whose probabilities differ by more than 1e-6 for some code)."""
+    pairs = differ = 0
+    for i, p in done.items():
+        twin = done.get(i.rsplit("|", 1)[0] + "|shuf1") if reqs[i]["order"] == "original" else None
+        if twin is None:
+            continue
+        pairs += 1
+        differ += any(abs(v - twin["probabilities"][k]) > 1e-6 for k, v in p["probabilities"].items())
+    return pairs, differ
 
 
 def cmd_report(args):
     out = Path(args.run_dir).resolve()
     reqs = {r["request_id"]: r for r in map(json.loads, open(out / "requests.jsonl", encoding="utf8"))}
-    if "n_options" not in next(iter(reqs.values())):
+    if not reqs:
+        sys.exit(f"STOPPED: {out / 'requests.jsonl'} is empty; build it again into a new --run-dir")
+    if any("n_options" not in r for r in reqs.values()):
         sys.exit(f"STOPPED: {out} was built by the earlier top-k version (5/10/20 options per request); this report reads "
                  "runs where every request holds the whole ranking. Its exports in option_probs/ are still valid.")
     requests_sha = hashlib.sha256((out / "requests.jsonl").read_bytes()).hexdigest()
@@ -201,6 +219,12 @@ def cmd_report(args):
             summary.append((NAMES[model], order, hit_metrics(items), sum(reqs[i]["order"] == order for i in selected[model])))
     head = f"{'model':<11} {'order':<9} {'n ok':>11} " + " ".join(f"{'hit@' + str(k):>6}" for k in KS) + f" {'MRR':>6}  | retriever " \
            + " ".join(f"{'@' + str(k):>5}" for k in KS) + f" {'MRR':>6} | tied"
+    if "CLEF" in preds:
+        pairs, differ = clef_order_check(reqs, preds["CLEF"])
+        clef_line = (f"Clef order check: {pairs} original/shuf1 pairs compared, {differ} with different probabilities"
+                     + (" (expected 0: Clef sorts options by code; investigate)" if differ else " (as expected)")
+                     + ("" if pairs else " (no pairs: the smoke sample held no matching requests)"))
+        print(clef_line)
     print(head)
     for name, order, h, n_exp in summary:
         print(f"{name:<11} {order:<9} {h['n']:>5}/{n_exp:<5} " + " ".join(f"{h[f'model_hit@{k}']:>6.3f}" for k in KS)
@@ -216,17 +240,18 @@ def cmd_report(args):
           "Retriever columns: the same measure for the source's own ranking on the same requests. MRR: mean of 1/rank (0 if absent). "
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
           "is the same in both orders.", "",
+          *([clef_line, ""] if "CLEF" in preds else []),
           "## Summary (all sources pooled)", "",
-          "| Model | Order | n ok | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | " + " | ".join(f"retriever @{k}" for k in KS) + " | retriever MRR | Tied top |",
-          "|---" * (5 + 2 * len(KS) + 2) + "|"]
+          "| Model | Order | n ok | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | " + " | ".join(f"retriever @{k}" for k in KS) + " | retriever MRR | Tied top |"]
+    md.append(separator(md[-1]))
     md += [f"| {name} | {order} | {h['n']}/{n_exp} | " + " | ".join(f"{h[f'model_hit@{k}']:.3f}" for k in KS) + f" | {h['model_mrr']:.3f} | "
            + " | ".join(f"{h[f'retriever_hit@{k}']:.3f}" for k in KS) + f" | {h['retriever_mrr']:.3f} | {h['tied_top']} |"
            for name, order, h, n_exp in summary] + [""]
     for order in ORDERS:
         md += [f"## Option order: {order}", "",
                "| Source | Model | n | Options (median) | In list | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | "
-               + " | ".join(f"retr @{k}" for k in KS) + " | retr MRR | Acc \\| in list | Brier | ECE |",
-               "|---" * (8 + 2 * len(KS) + 3) + "|"]
+               + " | ".join(f"retr @{k}" for k in KS) + " | retr MRR | Acc \\| in list | Brier | ECE |"]
+        md.append(separator(md[-1]))
         for r in (x for x in rows if x["order"] == order):
             flag = "" if r["n"] == r["n_expected"] else f" INCOMPLETE {r['n']}/{r['n_expected']}"
             md.append(f"| {r['source']} | {r['model']}{flag} | {r['n']} | {r['median_options']:g} | {r['in_list']:.3f} | "

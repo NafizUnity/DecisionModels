@@ -13,7 +13,9 @@ What the models read, for a list E119, E1165, R739 (each option's key is the cod
 | `A. E119` `B. E1165` `C. R739` | `A: E119` `B: E1165` `C: R739` | `OPTION 1: {"option_id":"E1165"}` ... |
 
 Clef sorts options by key, so it always sees them in code order: its `original` and `shuf1` inputs are identical, and so
-are its results (a built-in check).
+should its probabilities be. `report` checks this (`Clef order check: N pairs compared, 0 with different probabilities`)
+and says to investigate if any differ. Its hit@k can still differ slightly between the orders on an exact tie, since a
+tie goes to the earlier position.
 
 How the code works, from the big picture down to individual functions: [IMPLEMENTATION.md](IMPLEMENTATION.md).
 Problems met on a real cluster and their fixes: [Issues](#issues) at the end.
@@ -157,7 +159,7 @@ Prints counts and at most 5 unusual codes per list; no entity or query text.
     $PY decision_eval.py build --src /path/to/data.json --run-dir $RUN
 
 Checks the whole file first and writes nothing if any entity has a problem (missing keys, duplicate or empty `entity_id`, empty
-`entity_text`, not exactly one ground-truth code, a missing or empty source, a code listed twice, more than 255 codes). The
+`entity_text`, not exactly one ground-truth code, a missing source, fewer than 2 codes, a code listed twice, more than 255 codes). The
 messages name entity ids and codes only. It prints, per source, the list lengths and the retriever's hit@1/5/10/20 and
 share of lists holding the reference code, and stops if no reference code appears in any list (usually a code-format
 mismatch; `inspect_rankings.py` shows the formats). It also refuses a run folder that already has requests or predictions.
@@ -210,7 +212,7 @@ source) to the run folder:
 
 - `.jsonl`: one self-contained record per request: the model input (`state`, `instructions`, `options`: the codes in
   the order shown), `ground_truth` (code, position, retriever rank, whether it is in the list), `prediction` (code,
-  correct), and `probabilities`: every option as `{rank, key, code, probability}`, sorted from high to low. Requests without a
+  correct), and `probabilities`: every option as `{rank, key, code, probability, retriever_rank}`, sorted from high to low. Requests without a
   result are included with `status` `error` (and the error type) or `not_run`. **It contains the entity text**; keep it
   with the data.
 - `.csv`: the same probabilities, one row per request and option, ids and codes only (no entity text):
@@ -221,7 +223,7 @@ source) to the run folder:
 | `position`, `option_key`, `option_code` | where the option was shown (1 = first) and its code (the key is the code) |
 | `probability` | the model's normalized probability for this option, full precision |
 | `prob_rank` | 1 = highest; ties go to the earlier position, the same rule that picks the answer |
-| `retriever_rank` | the code's rank in the source's original ranking (for the reference code: the baseline) |
+| `retriever_rank` | this option's rank in the source's original ranking (for the reference code: the baseline) |
 | `is_prediction`, `is_gt`, `answerable` | picked by the runner / the reference code / reference code is among the options |
 | `n_tied_top` | how many options share the highest probability (1 = no tie) |
 

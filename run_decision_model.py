@@ -1,5 +1,7 @@
-"""Evaluate the three decision models as ICD-10-CA code pickers on RAG_OUTPUTS.json (synthetic data).
+"""Model runner for RealData (run, worker, export), plus the older ClinicalRag commands (build, report).
 
+RealData uses `run`, `worker` and `export` here; requests are built and reported by decision_eval.py. The `build` and
+`report` commands below are for the synthetic ClinicalRag file (RAG_OUTPUTS.json, top-k requests) and refuse RealData runs.
 Commands (run from GeminiOps/ClinicalRag with the base interpreter; every run gets its own --run-dir):
   python run_decision_model.py build --run-dir results/NAME [--src data/FILE.json]  # requests + dataset diagnostics (CPU)
   python run_decision_model.py run ELEPHANT --gpu 1 --run-dir results/NAME          # one model in its own env; resumable
@@ -129,14 +131,28 @@ def load_requests(run_dir, stride):
     return [r for r in rows if int(hashlib.sha256(r["request_id"].encode()).hexdigest()[:8], 16) % stride == 0]
 
 
+def rank_options(keys, probs):
+    """{key: 1-based rank} by probability, high to low; an exact tie goes to the earlier position in `keys` (the order the
+    options were shown). The same rule as the worker's pick, max() over the keys in shown order. Used by export and report."""
+    position = {k: i for i, k in enumerate(keys)}
+    return {k: i for i, k in enumerate(sorted(keys, key=lambda k: (-probs[k], position[k])), 1)}
+
+
+def n_tied_top(probs):
+    """How many options share the highest probability (1 = no tie)."""
+    top = max(probs.values())
+    return sum(v == top for v in probs.values())
+
+
 EXPORT_COLUMNS = ("request_id", "entity_id", "source", "n_options", "order", "model", "position", "option_key", "option_code",
                   "probability", "prob_rank", "retriever_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
 
 
 def export_options(run_dir, model, smoke):
     """Write two timestamped files to run_dir/option_probs/ (name <MODEL>[_smoke]_<run>_<UTC time>), plus a .json sidecar:
-      .jsonl  one self-contained record per selected request: the model input (state, question, options letter -> code),
-              the ground truth, the prediction and every option's probability (sorted high to low). Requests without a
+      .jsonl  one self-contained record per selected request: the model input (state, question, options: the codes in the
+              order shown; older top-k runs: letter -> code), the ground truth, the prediction and every option's
+              probability and retriever rank (sorted by probability, high to low). Requests without a
               result are included with their status. HOLDS ENTITY TEXT: keep it with the data, like requests.jsonl.
       .csv    one row per (request, option): ids, codes and probabilities only, no entity text.
     Reads requests.jsonl and the predictions file. Standard library only, so it runs in the model envs and the base python."""
@@ -150,6 +166,12 @@ def export_options(run_dir, model, smoke):
     if meta.get("requests_sha256") != requests_sha:
         sys.exit(f"STOPPED: {pred_path.name} was made for a different requests.jsonl; not exporting")
     requests = load_requests(run_dir, meta.get("stride", 1))
+    # each code's rank in the source's own ranking = its position in the request's 'original' order (all requests,
+    # not only the selected ones: a smoke sample may hold the shuf1 request without its original twin)
+    retriever = {}
+    for r in load_requests(run_dir, 1):
+        if r["order"] == "original":
+            retriever[r["request_id"].rsplit("|", 1)[0]] = {c: i for i, c in enumerate(r["codes"], 1)}
     latest, last_error = {}, {}
     for row in lh_core.read_jsonl_readonly(pred_path)[0]:
         if row.get("status") == "ok":
@@ -169,6 +191,8 @@ def export_options(run_dir, model, smoke):
         for r in requests:
             question = next(iter(r["record"]["questions"].values()))   # the one question (older runs named it "longhealth")
             letters = list(question["criteria"])
+            code_of = dict(zip(letters, r["codes"]))
+            retr = retriever.get(r["request_id"].rsplit("|", 1)[0], {})
             entity_id = r.get("entity_id", r["request_id"].split("|")[0])
             n_options = r.get("n_options", r.get("k"))          # older top-k runs stored k
             options = question["criteria"]
@@ -188,22 +212,21 @@ def export_options(run_dir, model, smoke):
                 fj.write(json.dumps(record, ensure_ascii=False) + "\n")
                 continue
             probs = p["probabilities"]
-            top = max(probs.values())
-            tied = sum(v == top for v in probs.values())
+            tied = n_tied_top(probs)
             n_req += 1
             n_tied += tied > 1
-            ranked = sorted(letters, key=lambda l: (-probs[l], letters.index(l)))
-            rank = {l: i for i, l in enumerate(ranked, 1)}
+            rank = rank_options(letters, probs)
+            ranked = sorted(letters, key=rank.get)
             record.update(status="ok",
                           prediction={"key": p["prediction_letter"], "code": p["prediction_code"],
                                       "correct": p["prediction_code"] == r["gt_code"]},
-                          probabilities=[{"rank": rank[l], "key": l, "code": r["codes"][letters.index(l)], "probability": probs[l]}
-                                         for l in ranked],
+                          probabilities=[{"rank": rank[l], "key": l, "code": code_of[l], "probability": probs[l],
+                                          "retriever_rank": retr.get(code_of[l])} for l in ranked],
                           n_tied_top=tied, latency_s=p.get("latency_s"))
             fj.write(json.dumps(record, ensure_ascii=False) + "\n")
             for pos, (letter, code) in enumerate(zip(letters, r["codes"]), 1):
                 w.writerow((r["request_id"], entity_id, r.get("source", ""), n_options,
-                            r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter], r.get("retriever_rank", ""),
+                            r["order"], model, pos, letter, code, repr(probs[letter]), rank[letter], retr.get(code, ""),
                             int(letter == p["prediction_letter"]), int(code == r["gt_code"]), int(bool(r["answerable"])), tied))
                 n_rows += 1
     os.replace(tmp, out)
@@ -215,7 +238,9 @@ def export_options(run_dir, model, smoke):
         "requests_selected": len(requests), "requests_exported": n_req, "requests_without_result": len(requests) - n_req,
         "requests_with_tied_top": n_tied, "csv_rows": n_rows, "csv_columns": list(EXPORT_COLUMNS),
         "jsonl_contains_entity_text": True,
-        "notes": {"position": "1-based place the option was shown in (A=1)",
+        "notes": {"position": "1-based place the option was shown in (first = 1)",
+                  "option_key": "the key the option was given: the code itself (older top-k runs: a letter A-T)",
+                  "retriever_rank": "this code's rank in the source's original ranking (empty if unknown)",
                   "probability": "normalized probability as given to the scorer (full float precision)",
                   "prob_rank / rank": "1 = highest probability; ties broken by position, the same rule that picks the prediction",
                   "is_prediction": "the option the runner picked (highest probability, earliest position on a tie)",
@@ -413,6 +438,8 @@ def comparison_tables(reqs, all_preds, out_dir):
 def cmd_report(args):
     project = Path(args.run_dir).resolve()
     reqs = {r["request_id"]: r for r in map(json.loads, open(project / "requests.jsonl", encoding="utf8"))}
+    if any("k" not in r for r in reqs.values()):
+        sys.exit("STOPPED: this run folder was built by decision_eval.py; use `python decision_eval.py report --run-dir ...`")
     rows, summary, all_preds = [], [], {}
     for model in ("ELEPHANT", "CLEF", "DREX"):
         path = project / f"predictions_{model}.jsonl"
