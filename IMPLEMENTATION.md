@@ -215,6 +215,7 @@ This uses **two processes**, because each model needs its own Python and package
 3. For each group and each model, it computes the metrics in section 5: hit@k and MRR from [hit_metrics](decision_eval.py#L143) (with [model_rank](decision_eval.py#L132)), and Acc, Brier and ECE from [cell_metrics](run_decision_model.py#L352).
 4. The retriever columns are the same hit@k and MRR computed from `retriever_rank` on the same requests: the baseline.
 5. Writes `ranking_results.csv` (all numbers) and `ranking_tables.md` (summary plus one table per option order). A model with missing answers in a group is marked `INCOMPLETE n/expected`.
+6. `write_comparison` (also the `compare` command) reads `ranking_results.csv` back and writes `ranking_comparison.md` / `.csv`: per source, the retriever baseline row, then every model x order with each metric and its difference from the baseline.
 6. It refuses run folders from the earlier top-k version (no `n_options` in the requests).
 
 It only reads files and never changes them, so it is safe to run while a model is still running. The numbers are then partial and flagged.

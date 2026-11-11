@@ -261,6 +261,56 @@ def cmd_report(args):
         md.append("")
     (out / f"ranking_tables{suffix}.md").write_text("\n".join(md) + "\n", encoding="utf8")
     print(f"wrote {out/f'ranking_results{suffix}.csv'} and {out/f'ranking_tables{suffix}.md'}")
+    write_comparison(out, suffix)
+
+
+def write_comparison(out, suffix=""):
+    """One table per run: for every source, the retriever's own ranking (baseline) and each model x order, with hit@1/5/10/20
+    and MRR and the difference from the baseline. Read from ranking_results.csv, so it needs no predictions."""
+    with open(out / f"ranking_results{suffix}.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    if not rows:
+        sys.exit(f"STOPPED: {out / f'ranking_results{suffix}.csv'} is empty")
+    metrics = [f"hit@{k}" for k in KS] + ["mrr"]
+    labels = [f"hit@{k}" for k in KS] + ["MRR"]
+    sources = [s for s in SOURCES if any(r["source"] == s for r in rows)]
+    md = ["# Model re-ranking vs the retriever's own ranking (baseline)" + (" - SMOKE TEST (not results)" if suffix else ""), "",
+          "Each cell: the model's value, then the difference from the retriever baseline on the same requests "
+          "(positive = the model is better; **bold** = better than the baseline). shuf1 = options shuffled, so the model "
+          "cannot use the retriever's order; original = retriever's order. In list = share of lists that hold the reference "
+          "code (the ceiling for every hit@k).", "",
+          "| Source | In list | Ranker | Order | n | " + " | ".join(labels) + " |"]
+    md.append(separator(md[-1]))
+    flat = []
+    for source in sources:
+        mine = [r for r in rows if r["source"] == source]
+        base = mine[0]   # every model x order of a source covers the same entities, so the retriever values agree
+        ref = {m: float(base[f"retriever_{m}"]) for m in metrics}
+        md.append(f"| **{source}** | {float(base['in_list']):.3f} | **Retriever (baseline)** | - | {base['n_expected']} | "
+                  + " | ".join(f"{ref[m]:.3f}" for m in metrics) + " |")
+        flat.append({"source": source, "ranker": "Retriever (baseline)", "order": "-", "n": base["n_expected"],
+                     **{m: f"{ref[m]:.4f}" for m in metrics}, **{f"delta_{m}": "0" for m in metrics}})
+        for order in ORDERS:
+            for r in (x for x in mine if x["order"] == order):
+                cells = []
+                for m in metrics:
+                    v, d = float(r[f"model_{m}"]), float(r[f"model_{m}"]) - ref[m]
+                    cells.append(f"**{v:.3f} ({d:+.3f})**" if d > 0.0005 else f"{v:.3f} ({d:+.3f})")
+                flag = "" if r["n"] == r["n_expected"] else f" (INCOMPLETE {r['n']}/{r['n_expected']})"
+                md.append(f"|  |  | {r['model']}{flag} | {order} | {r['n']} | " + " | ".join(cells) + " |")
+                flat.append({"source": source, "ranker": r["model"], "order": order, "n": r["n"],
+                             **{m: f"{float(r[f'model_{m}']):.4f}" for m in metrics},
+                             **{f"delta_{m}": f"{float(r[f'model_{m}']) - ref[m]:+.4f}" for m in metrics}})
+    (out / f"ranking_comparison{suffix}.md").write_text("\n".join(md) + "\n", encoding="utf8")
+    with open(out / f"ranking_comparison{suffix}.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(flat[0]))
+        w.writeheader()
+        w.writerows(flat)
+    print(f"wrote {out/f'ranking_comparison{suffix}.md'} and {out/f'ranking_comparison{suffix}.csv'}")
+
+
+def cmd_compare(args):
+    write_comparison(Path(args.run_dir).resolve(), "_smoke" if args.smoke else "")
 
 
 if __name__ == "__main__":
@@ -269,5 +319,7 @@ if __name__ == "__main__":
     b = sub.add_parser("build"); b.add_argument("--src", required=True); b.add_argument("--run-dir", required=True)
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
+    c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")
+    c.add_argument("--run-dir", required=True); c.add_argument("--smoke", action="store_true")
     args = p.parse_args()
-    {"build": cmd_build, "report": cmd_report}[args.cmd](args)
+    {"build": cmd_build, "report": cmd_report, "compare": cmd_compare}[args.cmd](args)

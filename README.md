@@ -198,7 +198,11 @@ that long (for example `echo $SLURM_JOB_ID`, `squeue -u $USER`); a time-limited 
     $PY decision_eval.py report --run-dir $RUN
 
 Prints a summary (model x order, all sources pooled) and writes `ranking_tables.md` and `ranking_results.csv` (per
-source) to the run folder:
+source) to the run folder. It also writes `ranking_comparison.md` / `.csv`: for every source, the retriever baseline
+and each model x order with hit@1/5/10/20 and MRR and the difference from the baseline. For a run reported before
+this existed, make it from the existing csv (no rerun):
+
+    $PY decision_eval.py compare --run-dir $RUN
 
 - `hit@k`: the reference code is among the model's k most likely codes (ties go to the earlier position). Lists without
   the reference code count as misses. hit@1 is the accuracy of the model's answer.
