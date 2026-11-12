@@ -2,6 +2,7 @@
 
   python decision_eval.py build --src FILE.json --run-dir results/NAME       # requests.jsonl (contains entity text; keep it with the data)
       [--descriptions icd_snomed_index.jsonl]                                 # options carry each code's long description
+      [--top K]                                                               # only the retriever's first K codes per list
   python run_decision_model.py run ELEPHANT --gpu 1 --run-dir results/NAME   # one model at a time, resumable
   python decision_eval.py report --run-dir results/NAME [--smoke]            # tables in results/NAME
 
@@ -13,6 +14,9 @@ its input does not depend on the order). Original order is the pipeline as ranke
 With --descriptions, each option's value is the code's long_description (short_description when long is empty), so the
 models see "A. E119: Type 2 diabetes ..." / "A: E119: ..." / {"description": "...", "option_id": "E119"}; every model
 adds the code itself. check_descriptions.py checks an index before such a build.
+With --top K, each request holds only the first K codes of the source's ranking (shorter lists are kept whole); a
+reference code ranked below K is then not an option and counts as a miss, so the ceiling is the retriever's hit@K.
+Without --top, requests and option orders are exactly those of the whole-list runs.
 """
 import argparse
 import csv
@@ -117,10 +121,13 @@ def cmd_build(args):
         for line in problems[:30]:
             print("  " + line)
         sys.exit(f"STOPPED: {len(problems)} problem(s) in {args.src} (first {min(30, len(problems))} above); nothing was written")
+    if args.top is not None and args.top < 2:
+        sys.exit(f"STOPPED: --top must be at least 2 (a choice needs two options), got {args.top}; nothing was written")
+    top = args.top
     desc = load_descriptions(args.descriptions) if args.descriptions else None
     option_text = "long_description" if desc else "code"
     if desc:
-        missing = sorted({c for d in data for s in SOURCES for c in d["rankings"][s] if c not in desc})
+        missing = sorted({c for d in data for s in SOURCES for c in d["rankings"][s][:top] if c not in desc})
         if missing:
             sys.exit(f"STOPPED: {len(missing)} list code(s) have no description in {args.descriptions} "
                      f"(first: {missing[:20]}); run check_descriptions.py. Nothing was written")
@@ -132,22 +139,25 @@ def cmd_build(args):
         eid = str(d["entity_id"])
         state = merged_context(d["entity_text"], d.get("query_text") or "")
         for source in SOURCES:
-            ranking = list(d["rankings"][source])
+            ranking = list(d["rankings"][source])[:top]                  # top=None keeps the whole ranking
             rank = ranking.index(gt) + 1 if gt in ranking else None      # the retriever's rank of the reference code
             lengths[source].append(len(ranking))
             retr_rank[source].append(rank)
             for order in ORDERS:
-                codes = order_for(ranking, order, f"{eid}|{source}", "all")
+                # the shuffle seed keeps "all" for whole lists, so those runs reproduce the earlier option orders
+                codes = order_for(ranking, order, f"{eid}|{source}", "all" if top is None else f"top{top}")
                 rows.append({"request_id": f"{eid}|{source}|{order}", "entity_id": eid, "source": source, "order": order,
                              "n_options": len(codes), "gt_code": gt, "answerable": rank is not None,
                              "gt_letter": gt if rank is not None else None,     # the option key of the reference code
                              "gt_position": codes.index(gt) + 1 if rank is not None else None,
                              "retriever_rank": rank, "rank1_correct": rank == 1, "codes": codes, "option_text": option_text,
+                             "top": top,
                              "record": {"state": state, "questions": {lh_core.QUESTION_ID: {
                                  "type": "choice", "instructions": QUESTION,
                                  "criteria": {c: desc[c] if desc else None for c in codes}}}}})
-    print(f"{len(data)} entities. Every request holds a source's whole ranking. Retriever: share of entities with the "
-          f"reference code within its top k:")
+    held = "a source's whole ranking" if top is None else f"the first {top} codes of a source's ranking"
+    print(f"{len(data)} entities. Every request holds {held}. Retriever: share of entities with the reference code "
+          f"within its top k" + (f" (k above {top} cannot exceed @{top}):" if top else ":"))
     print(f"  {'source':<16} {'codes min/median/max':>20}  " + "  ".join(f"@{k:<4}" for k in KS) + "  in list")
     for source in SOURCES:
         L, R = lengths[source], retr_rank[source]
@@ -167,8 +177,8 @@ def cmd_build(args):
     lh_core.write_json_atomic(out / "build_meta.json", {
         "src": str(Path(args.src).resolve()), "src_sha256": sha(args.src), "option_text": option_text,
         "descriptions": str(Path(args.descriptions).resolve()) if desc else None,
-        "descriptions_sha256": sha(args.descriptions) if desc else None, "requests": len(rows)})
-    print(f"options: {'code + ' + option_text if desc else 'bare codes'}")
+        "descriptions_sha256": sha(args.descriptions) if desc else None, "top": top, "requests": len(rows)})
+    print(f"options: {'code + ' + option_text if desc else 'bare codes'}; {'whole lists' if top is None else f'top {top} per list'}")
     print(f"wrote {len(rows)} requests for {len(data)} entities ({sum(r['n_options'] for r in rows)} options in all) -> {out/'requests.jsonl'}")
 
 
@@ -276,8 +286,12 @@ def cmd_report(args):
         w.writeheader()
         w.writerows(rows)
     text = "codes with descriptions" if any(r.get("option_text", "code") != "code" for r in reqs.values()) else "bare codes"
-    md = [f"# Decision models re-ranking whole retrieval lists (no notes, {text})" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
-          "Each request gives the model every code in one source's ranking. hit@k: the reference code is among the model's k most "
+    tops = {r.get("top") for r in reqs.values()}
+    lists = "whole retrieval lists" if tops == {None} else f"the retriever's top {'/'.join(map(str, sorted(t or 0 for t in tops)))}"
+    md = [f"# Decision models re-ranking {lists} (no notes, {text})" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
+          ("Each request gives the model every code in one source's ranking. " if tops == {None} else
+           f"Each request gives the model the first {'/'.join(map(str, sorted(t or 0 for t in tops)))} codes of one source's ranking "
+           "(a reference code ranked lower is not an option and counts as a miss). ") + "hit@k: the reference code is among the model's k most "
           "likely codes (ties go to the earlier position); requests whose list lacks the reference code count as misses. "
           "Retriever columns: the same measure for the source's own ranking on the same requests. MRR: mean of 1/rank (0 if absent). "
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
@@ -355,6 +369,8 @@ if __name__ == "__main__":
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--src", required=True); b.add_argument("--run-dir", required=True)
     b.add_argument("--descriptions", help="icd_snomed_index.jsonl: give every option its code's long description")
+    b.add_argument("--top", type=int, metavar="K", help="give the model only the retriever's first K codes of each list "
+                   "(default: the whole list)")
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")

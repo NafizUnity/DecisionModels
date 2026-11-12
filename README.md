@@ -282,6 +282,22 @@ so the two compare directly.
     nohup bash -c "for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run \$m --gpu 0 --run-dir $RUN_DESC --weights-dir $MODELS; done; echo ALL_DONE" > desc_run.log 2>&1 &
     $PY decision_eval.py report --run-dir $RUN_DESC
 
+## 9. Run on the retriever's top K only
+
+Same as step 8 with `--top K`: each request holds only the first K codes of the source's ranking (lists shorter than K
+are kept whole). A reference code ranked below K is not an option and counts as a miss, so the model's top-K can at
+most equal the retriever's hit@K. Choose K on the command line; use one folder per K. `--top` works with or without
+`--descriptions`, and the shuf1 orders are seeded per K (without `--top`, the orders are those of the whole-list runs).
+
+    export K=20
+    export RUN_TOP=results/real_top${K}_desc
+    $PY decision_eval.py build --src "$DATA" --run-dir $RUN_TOP --descriptions "$INDEX" --top $K     # prints "top 20 per list"
+    for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN_TOP --weights-dir $MODELS --stride 100; done
+    $PY decision_eval.py report --run-dir $RUN_TOP --smoke
+    nohup bash -c "for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run \$m --gpu 0 --run-dir $RUN_TOP --weights-dir $MODELS; done; echo ALL_DONE" > top${K}_run.log 2>&1 &
+    tail -f top${K}_run.log
+    $PY decision_eval.py report --run-dir $RUN_TOP
+
 ## Data handling
 
 `requests.jsonl` and the `option_probs/*.jsonl` exports in the run folder contain entity and query text, so keep the run folder with the data. Logs hold only counts and error types.
