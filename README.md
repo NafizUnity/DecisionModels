@@ -26,7 +26,7 @@ allowed on your server before step 1; the sources are listed under [What setup d
 
 ## Quick start: two commands
 
-    cp realdata.conf.example realdata.conf     # once: set BASE, HF_CACHE, DATA, INDEX, GPU
+    cp realdata.conf.example realdata.conf     # once: set DATA, INDEX, HF_CACHE (and RESULTS_DIR, GPU if needed)
     bash realdata_setup.sh                     # once per server: checks everything, installs only what is missing
     bash realdata_run.sh --desc --top 20       # build, smoke test, full run (background), report
 
@@ -36,7 +36,7 @@ never downloaded. If something is missing, it lists what it would download and a
 installs anything. It ends with `READY` or `NOT READY: <reasons>`.
 
 `realdata_run.sh` takes the options of steps 3-9 below: nothing (bare codes, whole lists), `--desc`, `--top K`,
-`--models "DREX CLEF"`, `--gpu N`, `--name FOLDER`. It names the folder (`results/real_top20_desc` etc.), builds or
+`--models "DREX CLEF"`, `--gpu N`, `--name FOLDER`. It names the folder under `RESULTS_DIR` (`real_top20_desc` etc.), builds or
 reuses the requests (only if they come from the same data, index and K), smoke-tests each model, runs the full set in
 the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunning the same command resumes.
 `--report-only` rebuilds the tables from an existing folder. The sections below are the manual steps the scripts run.

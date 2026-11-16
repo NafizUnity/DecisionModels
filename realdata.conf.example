@@ -19,6 +19,10 @@ DATA="/path/to/data.json"
 # ICD index with long descriptions (needed for realdata_run.sh --desc). Empty = bare codes only.
 INDEX="/path/to/icd_snomed_index.jsonl"
 
+# Where run folders go. Each run gets its own subfolder, named from the options (real_whole_list, real_whole_list_desc,
+# real_top20_desc, ...) or by --name. Run folders hold entity text (requests.jsonl, option_probs/): keep them on the server.
+RESULTS_DIR="$HOME/DecisionModels/RealData/results"
+
 # Physical GPU index to run on, the models to run (in this order) and the smoke-test sample (every Nth request).
 GPU=0
 RUN_MODELS="ELEPHANT DREX CLEF"

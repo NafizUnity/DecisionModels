@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # realdata_run.sh: build the requests, smoke-test, run the decision models and write the report, in one command.
 #
-#   bash realdata_run.sh                       # whole lists, bare codes        -> results/real_whole_list
-#   bash realdata_run.sh --desc                # whole lists + descriptions     -> results/real_whole_list_desc
-#   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> results/real_top20_desc
-#   options: --models "DREX CLEF"  --gpu 1  --name results/my_run  --conf FILE  --no-smoke  --foreground  --report-only
+#   bash realdata_run.sh                       # whole lists, bare codes        -> RESULTS_DIR/real_whole_list
+#   bash realdata_run.sh --desc                # whole lists + descriptions     -> RESULTS_DIR/real_whole_list_desc
+#   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> RESULTS_DIR/real_top20_desc
+#   options: --models "DREX CLEF"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke  --foreground  --report-only
 #
-# Paths come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
+# Paths (data, index, models, RESULTS_DIR) come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
 # continue in the background (nohup) and the script prints the `tail -f` command for its log. Rerunning the same
 # command resumes: the build is reused when its inputs are unchanged, finished requests are skipped, and a model whose
 # full run is complete is not smoke-tested again. It ends with "DONE: <run folder>" or "STOPPED: <reason>".
@@ -56,10 +56,11 @@ command -v conda >/dev/null || stop "conda not found: run bash realdata_setup.sh
 PY="$(dirname "$(command -v conda)")/python"; [ -x "$PY" ] || PY=python3
 
 # ---- run folder -------------------------------------------------------------------------------------------------------
+RESULTS_DIR="${RESULTS_DIR:-$HERE/results}"
 if [ -z "$NAME" ]; then
-    NAME="results/real_$([ -n "$TOP" ] && echo "top$TOP" || echo whole_list)$([ "$DESC" = 1 ] && echo _desc || true)"
+    NAME="real_$([ -n "$TOP" ] && echo "top$TOP" || echo whole_list)$([ "$DESC" = 1 ] && echo _desc || true)"
 fi
-case "$NAME" in /*) RUN="$NAME" ;; *) RUN="$HERE/$NAME" ;; esac
+case "$NAME" in /*) RUN="$NAME" ;; *) RUN="$RESULTS_DIR/$NAME" ;; esac   # --name: a full path, or a name under RESULTS_DIR
 cd "$HERE"
 
 # ======================================================================================================================
