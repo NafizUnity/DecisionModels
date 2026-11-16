@@ -4,7 +4,9 @@
 #   bash realdata_run.sh                       # whole lists, bare codes        -> RESULTS_DIR/real_whole_list
 #   bash realdata_run.sh --desc                # whole lists + descriptions     -> RESULTS_DIR/real_whole_list_desc
 #   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> RESULTS_DIR/real_top20_desc
-#   options: --models "DREX CLEF"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke  --foreground  --report-only
+#   bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check   # quick check: about 2 requests per model
+#   options: --models "DREX CLEF"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
+#            --foreground  --report-only  --smoke-only (stop after the smoke test)  --smoke-n N (smoke sample of at least N)
 #
 # Paths (data, index, models, RESULTS_DIR) come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
 # continue in the background (nohup) and the script prints the `tail -f` command for its log. Rerunning the same
@@ -14,6 +16,7 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGS=("$@")
 CONF="$HERE/realdata.conf"; DESC=0; TOP=""; NAME=""; GPU_ARG=""; MODELS_ARG=""; SMOKE=1; FOREGROUND=0; REPORT_ONLY=0
+SMOKE_ONLY=0; SMOKE_N=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --desc) DESC=1; shift ;;
@@ -25,7 +28,9 @@ while [ $# -gt 0 ]; do
         --no-smoke) SMOKE=0; shift ;;
         --foreground) FOREGROUND=1; shift ;;
         --report-only) REPORT_ONLY=1; shift ;;
-        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        --smoke-only) SMOKE_ONLY=1; FOREGROUND=1; shift ;;
+        --smoke-n) SMOKE_N="${2:?--smoke-n needs a number}"; shift 2 ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -40,6 +45,8 @@ source "$CONF"
 GPU="${GPU_ARG:-${GPU:-0}}"; RUN_MODELS="${MODELS_ARG:-${RUN_MODELS:-ELEPHANT DREX CLEF}}"; RUN_MODELS="${RUN_MODELS^^}"
 SMOKE_STRIDE="${SMOKE_STRIDE:-100}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"
 if [ -n "$TOP" ] && ! [[ "$TOP" =~ ^[0-9]+$ && "$TOP" -ge 2 ]]; then stop "--top must be a whole number of 2 or more"; fi
+if [ -n "$SMOKE_N" ] && ! [[ "$SMOKE_N" =~ ^[0-9]+$ && "$SMOKE_N" -ge 1 ]]; then stop "--smoke-n must be a whole number of 1 or more"; fi
+if [ "$SMOKE_ONLY" = 1 ] && { [ "$SMOKE" = 0 ] || [ "$REPORT_ONLY" = 1 ]; }; then stop "--smoke-only cannot be combined with --no-smoke or --report-only"; fi
 for m in $RUN_MODELS; do [[ "$m" =~ ^(ELEPHANT|CLEF|DREX)$ ]] || stop "unknown model $m (ELEPHANT, CLEF, DREX)"; done
 
 # ---- the same clean shell as realdata_setup.sh, offline ---------------------------------------------------------------
@@ -148,10 +155,27 @@ run_model() {
 
 if [ "$REPORT_ONLY" = 0 ]; then
     if [ "$SMOKE" = 1 ]; then
+        if [ -n "$SMOKE_N" ]; then   # the largest stride whose sample (a hash of the request id, as in the worker) has >= N requests
+            SMOKE_STRIDE="$("$PY" - "$RUN/requests.jsonl" "$SMOKE_N" <<'PY'
+import hashlib, json, sys
+ids = [json.loads(line)["request_id"] for line in open(sys.argv[1], encoding="utf8") if line.strip()]
+n, hashes = int(sys.argv[2]), [int(hashlib.sha256(i.encode()).hexdigest()[:8], 16) for i in ids]
+s = max(2, len(ids) // n)
+while s > 2 and sum(h % s == 0 for h in hashes) < n:
+    s -= 1
+print(s)
+PY
+            )"
+        fi
         smoked=0
         for m in $RUN_MODELS; do
             if [ -f "$RUN/predictions_${m}.jsonl" ]; then say "Smoke test: $m skipped (its full run has started before)"; continue; fi
-            say "Smoke test: $m (every ${SMOKE_STRIDE}th request)"
+            meta="$RUN/predictions_${m}_smoke.jsonl.meta.json"
+            if [ -f "$meta" ]; then
+                old="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stride"))' "$meta")"
+                [ "$old" = "$SMOKE_STRIDE" ] || stop "$m already has a smoke test with stride $old in $RUN; use the same SMOKE_STRIDE, or --name for a new folder"
+            fi
+            say "Smoke test: $m (every ${SMOKE_STRIDE}th request${SMOKE_N:+, chosen for at least $SMOKE_N})"
             run_model "$m" --stride "$SMOKE_STRIDE" || stop "smoke test of $m did not finish cleanly (see above); fix it, then rerun"
             smoked=1
         done
@@ -159,6 +183,7 @@ if [ "$REPORT_ONLY" = 0 ]; then
             say "Smoke report"
             "$PY" decision_eval.py report --run-dir "$RUN" --smoke || stop "smoke report failed (see above)"
         fi
+        if [ "$SMOKE_ONLY" = 1 ]; then say "DONE (smoke test only): $RUN"; exit 0; fi
     fi
     partial=()
     for m in $RUN_MODELS; do

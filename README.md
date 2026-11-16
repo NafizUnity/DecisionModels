@@ -39,7 +39,7 @@ installs anything. It ends with `READY` or `NOT READY: <reasons>`.
 `--models "DREX CLEF"`, `--gpu N`, `--name FOLDER`. It names the folder under `RESULTS_DIR` (`real_top20_desc` etc.), builds or
 reuses the requests (only if they come from the same data, index and K), smoke-tests each model, runs the full set in
 the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunning the same command resumes.
-`--report-only` rebuilds the tables from an existing folder. The sections below are the manual steps the scripts run.
+`--report-only` rebuilds the tables from an existing folder. Quick check that everything runs: `bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check` (a few requests per model, then stops). The sections below are the manual steps the scripts run.
 
 ## Needs
 
