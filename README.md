@@ -24,6 +24,23 @@ Setup downloads software (conda and pip packages, three GitHub runtimes) once. A
 (`HF_HUB_OFFLINE=1`), and no command sends data anywhere. Check that installing user software from the internet is
 allowed on your server before step 1; the sources are listed under [What setup downloads](#what-setup-downloads).
 
+## Quick start: two commands
+
+    cp realdata.conf.example realdata.conf     # once: set BASE, HF_CACHE, DATA, INDEX, GPU
+    bash realdata_setup.sh                     # once per server: checks everything, installs only what is missing
+    bash realdata_run.sh --desc --top 20       # build, smoke test, full run (background), report
+
+`realdata_setup.sh` checks the GPU and driver, conda, and for each model its env, pinned core packages, imports,
+checkpoint and runtime. Anything already in place is skipped. With `HF_CACHE` set, checkpoints are verified and linked,
+never downloaded. If something is missing, it lists what it would download and asks first. `--check-only` never
+installs anything. It ends with `READY` or `NOT READY: <reasons>`.
+
+`realdata_run.sh` takes the options of steps 3-9 below: nothing (bare codes, whole lists), `--desc`, `--top K`,
+`--models "DREX CLEF"`, `--gpu N`, `--name FOLDER`. It names the folder (`results/real_top20_desc` etc.), builds or
+reuses the requests (only if they come from the same data, index and K), smoke-tests each model, runs the full set in
+the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunning the same command resumes.
+`--report-only` rebuilds the tables from an existing folder. The sections below are the manual steps the scripts run.
+
 ## Needs
 
 - A GPU with enough free memory: 22 GB (Elephant-1), 60 GB (Clef), 58 GB (Drex); models run one at a time. An 80-96 GB

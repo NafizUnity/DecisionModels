@@ -1,0 +1,25 @@
+# RealData settings, read by realdata_setup.sh and realdata_run.sh.
+# Copy to realdata.conf (kept out of git) and edit the paths: cp realdata.conf.example realdata.conf
+# Plain bash: no spaces around '='; quote values with spaces.
+
+# Folder that holds Miniforge (miniforge3/), the model links and GitHub runtimes (models/) and caches (cache/).
+BASE="$HOME/DecisionModels"
+
+# Where the checkpoint links, runtimes and setup logs go (the --weights-dir of every run).
+MODELS="$BASE/models"
+
+# Shared Hugging Face cache holding models--baselabs--elephant-1, models--Cloudflare--clef, models--nace-ai--drex-max-v1.
+# Set: checkpoints are verified and linked, never downloaded (setup stops if one is missing).
+# Empty: setup downloads the pinned checkpoints into $MODELS (about 120 GB), after asking.
+HF_CACHE="/mnt/nfs/projects/shared_llms/hf_cache/hub"
+
+# The entity file with the rankings (decision_eval.py build --src).
+DATA="/path/to/data.json"
+
+# ICD index with long descriptions (needed for realdata_run.sh --desc). Empty = bare codes only.
+INDEX="/path/to/icd_snomed_index.jsonl"
+
+# Physical GPU index to run on, the models to run (in this order) and the smoke-test sample (every Nth request).
+GPU=0
+RUN_MODELS="ELEPHANT DREX CLEF"
+SMOKE_STRIDE=100

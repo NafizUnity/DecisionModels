@@ -10,3 +10,5 @@ data/
 *.meta.json
 *.log
 setup_logs/
+# local settings for realdata_setup.sh / realdata_run.sh (server paths)
+realdata.conf

@@ -1,6 +1,7 @@
 """Use a checkpoint from a shared Hugging Face cache (models--ORG--NAME/snapshots/COMMIT) instead of downloading it.
 
   link      find a snapshot whose files match the pinned checkpoint, verify it, symlink PROJECT/FOLDER -> snapshot
+  check     read-only: is PROJECT/FOLDER already the pinned checkpoint (used by realdata_setup.sh to skip work)
   manifest  (maintainers) rewrite checkpoint_files.json from the Hub API for the revisions in revisions.lock.json
 
 A snapshot is accepted if every file the model uses (everything except README, LICENSE, images, .eval_results and
@@ -119,6 +120,35 @@ def cmd_link(args):
              f"(hf download {args.repo} --revision {args.revision}), or rerun setup-envs without --hf-cache to download it.")
 
 
+def cmd_check(args):
+    """Read-only: is DEST the pinned checkpoint? A link must point to a snapshot of REPO in the cache (if given) whose files
+    all match; a plain folder (a private download) is checked by file size only, which reads no weights. Exit 0 = ready."""
+    entry = json.loads(MANIFEST.read_text())["models"].get(args.repo)
+    if entry is None or entry["revision"] != args.revision:
+        sys.exit(f"NOT READY: {MANIFEST.name} does not list {args.repo}@{args.revision[:8]}")
+    dest = Path(args.dest)
+    if not dest.exists():
+        sys.exit(f"NOT READY: {dest} does not exist" + (" (broken link)" if dest.is_symlink() else ""))
+    if dest.is_symlink():
+        snap = Path(os.path.realpath(dest))
+        if args.cache:
+            want = (Path(args.cache).expanduser().resolve() / ("models--" + args.repo.replace("/", "--")) / "snapshots")
+            if snap.parent != want:
+                sys.exit(f"NOT READY: {dest} links to {snap}, not to a snapshot in {want}")
+        problems, _ = check_snapshot(snap, entry["files"])
+        if problems:
+            sys.exit(f"NOT READY: {dest} -> {snap}: {len(problems)} problem(s), first: {problems[0]}")
+        print(f"ready: {dest} -> {snap} ({sum(not is_optional(f) for f in entry['files'])} files verified)")
+        return
+    if args.cache:
+        sys.exit(f"NOT READY: {dest} is a plain folder, not a link into the shared cache {args.cache}")
+    bad = [rel for rel, meta in entry["files"].items() if not is_optional(rel)
+           and (not (dest / rel).is_file() or (dest / rel).stat().st_size != meta["size"])]
+    if bad:
+        sys.exit(f"NOT READY: {dest}: {len(bad)} file(s) missing or of the wrong size, first: {bad[0]}")
+    print(f"ready: {dest} (plain folder; file sizes match, hashes not checked)")
+
+
 def cmd_manifest(args):
     from huggingface_hub import HfApi
     lock = json.loads((HERE.parent / "revisions.lock.json").read_text())
@@ -141,6 +171,11 @@ def main():
         s.add_argument(a, required=True)
     s.add_argument("--record", default=None, help="write a JSON record of what was linked and verified")
     s.set_defaults(fn=cmd_link)
+    s = sub.add_parser("check", help="read-only: is DEST the pinned checkpoint (exit 0) or not (exit 1)")
+    for a in ("--repo", "--revision", "--dest"):
+        s.add_argument(a, required=True)
+    s.add_argument("--cache", default=None, help="the shared cache DEST must link into")
+    s.set_defaults(fn=cmd_check)
     sub.add_parser("manifest").set_defaults(fn=cmd_manifest)
     args = p.parse_args()
     args.fn(args)
