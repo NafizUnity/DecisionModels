@@ -129,8 +129,8 @@ def cmd_check(args):
     dest = Path(args.dest)
     if not dest.exists():
         sys.exit(f"NOT READY: {dest} does not exist" + (" (broken link)" if dest.is_symlink() else ""))
-    if dest.is_symlink():
-        snap = Path(os.path.realpath(dest))
+    snap = Path(os.path.realpath(dest))
+    if dest.is_symlink() and (args.cache or snap.parent.name == "snapshots"):   # a link into a Hugging Face cache
         if args.cache:
             want = (Path(args.cache).expanduser().resolve() / ("models--" + args.repo.replace("/", "--")) / "snapshots")
             if snap.parent != want:

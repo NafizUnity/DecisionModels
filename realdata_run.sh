@@ -132,6 +132,9 @@ run_model() {
         set -e
         if [ "$rc" -ne 0 ]; then rm -f "$out"; say "$m: stopped with exit code $rc (see above)"; return 2; fi
         # "<MODEL>: finished, N/N ok" (awk, not a grep backreference: some servers alias grep to ugrep)
+        if grep -q "$m: finished, 0/0 ok" "$out"; then
+            rm -f "$out"; say "$m: no requests selected (with --stride, fewer requests than the stride: lower SMOKE_STRIDE or use --no-smoke)"; return 2
+        fi
         if awk -v key="$m: finished, " 'index($0, key) { split(substr($0, index($0, key) + length(key)), a, "[/ ]")
                                                           if (a[1] != "" && a[1] == a[2]) found = 1 } END { exit !found }' "$out"; then
             rm -f "$out"; return 0
