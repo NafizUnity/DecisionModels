@@ -1,10 +1,24 @@
 # RealData: decision models on retrieval rankings
 
-Runs Elephant-1, Clef and Drex Max as ICD-10-CA code pickers. No clinical notes, bare codes as options.
+Runs Elephant-1, Clef and Drex Max (general decision models) and BioDecision v2 4B, MedDecider-27B and MedDecider-31B
+(medical decision models) as ICD-10-CA code pickers. No clinical notes, bare codes as options.
 The context is the entity text plus its expansion from `query_text`. Each request gives a model **every code in one
-source's ranking** (at most 255, the limit of all three models); top-k is then read from the model's own probabilities
-(hit@1, 5, 10, 20 and MRR) and compared with the retriever's ranking of the same list. 7 ranking sources, in original and
-shuffled option order.
+source's ranking** (or its first K with `--top K`); top-k is then read from the model's own probabilities
+(hit@1, 3, 5, 10, ... up to K, and MRR) and compared with the retriever's ranking of the same list. 7 ranking sources, in
+original and shuffled option order.
+
+How many options a model can score is fixed by its own code:
+
+| Model | Most options per request | Why |
+|---|---|---|
+| Elephant-1, Clef, Drex Max | 255 | built for long option lists |
+| BioDecision v2 4B | 24 | its letters A-X (`biodecision_server.LETTERS`) |
+| MedDecider-27B, MedDecider-31B | 10 | its letters A-J (`meddecider_infer.LETTERS`; model cards: "2 to 10 answer options") |
+
+`realdata_run.sh` skips a model that cannot score the run's lists: `--top 10` runs all six, `--top 11` to `24` drops
+MedDecider, larger K and whole lists run the general models only. The medical models share one env, `realdata-med`
+(torch 2.8, transformers 5.22.2, peft 0.21.2, the versions of GeminiOps/MedDecision); the MedDecider adapters also need
+their base models (`Qwen/Qwen3.8-27B`, `google/gemma-4-31b-it`) in `HF_CACHE`.
 
 What the models read, for a list E119, E1165, R739 (each option's key is the code, with no description):
 

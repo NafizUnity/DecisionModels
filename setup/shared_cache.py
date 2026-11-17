@@ -153,9 +153,11 @@ def cmd_manifest(args):
     from huggingface_hub import HfApi
     lock = json.loads((HERE.parent / "revisions.lock.json").read_text())
     api, models = HfApi(), {}
-    for m in lock["models"].values():
-        info = api.model_info(m["repo"], revision=m["revision"], files_metadata=True)
-        models[m["repo"]] = {"revision": m["revision"], "files": {
+    pins = [(m["repo"], m["revision"]) for m in lock["models"].values()]
+    pins += [(m["base_repo"], m["base_revision"]) for m in lock["models"].values() if m.get("base_repo")]   # MedDecider bases
+    for repo, revision in pins:
+        info = api.model_info(repo, revision=revision, files_metadata=True)
+        models[repo] = {"revision": revision, "files": {
             s.rfilename: ({"size": s.size, "hash": s.lfs.sha256, "hash_kind": "sha256"} if s.lfs else
                           {"size": s.size, "hash": s.blob_id, "hash_kind": "git_blob_sha1"}) for s in info.siblings}}
     MANIFEST.write_text(json.dumps({"created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "models": models}, indent=1))

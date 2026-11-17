@@ -346,6 +346,11 @@ def cmd_run(args):
         sys.exit(f"--weights-dir {args.weights_dir} is not a folder (pass the folder given to setup-envs as --project-dir).")
     if not (Path(args.run_dir) / "requests.jsonl").exists():
         sys.exit(f"{args.run_dir} has no requests.jsonl; run decision_eval.py build first.")
+    limit = lh_core.MODELS_INFO[model].get("max_options", 255)
+    largest = max((r.get("n_options") or len(r["codes"]) for r in load_requests(args.run_dir, args.stride)), default=0)
+    if largest > limit:
+        sys.exit(f"{model} scores at most {limit} options per request (its own option letters), but {args.run_dir} has requests "
+                 f"with {largest}. Build a run folder with --top {limit} or less for it.")
     free, need = lhmain.gpu_free_gb(args.gpu), lh_core.MODELS_INFO[model]["min_vram_gb"]
     if free < need:
         sys.exit(f"Only {free:.1f} GB free on GPU {args.gpu}; {model} needs {need}.")

@@ -25,13 +25,26 @@ from pathlib import Path
 # ----------------------------------------------------------------------------------------------------------------------
 # Static model table, shared by main.py and the workers
 # ----------------------------------------------------------------------------------------------------------------------
+# max_options: the most options one request may hold. The general models take 255; the medical models read the logits
+# of fixed option letters, so their own inference code caps them: MedDecider "ABCDEFGHIJ" (10, model cards: "2 to 10
+# answer options"), BioDecision "A..X" (24, biodecision_server.LETTERS).
 MODELS_INFO = {
     "ELEPHANT": {"env": "realdata-elephant", "file": "model_elephant.py", "repo": "baselabs/elephant-1",
-                 "weights_dir": "elephant-1", "min_vram_gb": 22, "python": "3.11"},
+                 "weights_dir": "elephant-1", "min_vram_gb": 22, "python": "3.11", "max_options": 255, "label": "Elephant-1"},
     "CLEF": {"env": "realdata-clef", "file": "model_clef.py", "repo": "Cloudflare/clef",
-             "weights_dir": "clef", "min_vram_gb": 60, "python": "3.11"},
+             "weights_dir": "clef", "min_vram_gb": 60, "python": "3.11", "max_options": 255, "label": "Clef"},
     "DREX": {"env": "realdata-drex", "file": "model_drex.py", "repo": "nace-ai/drex-max-v1",
-             "weights_dir": "drex-max-v1", "min_vram_gb": 58, "min_vram_gb_int8": 30, "python": "3.12"},
+             "weights_dir": "drex-max-v1", "min_vram_gb": 58, "min_vram_gb_int8": 30, "python": "3.12", "max_options": 255,
+             "label": "Drex Max"},
+    "BIODECISION": {"env": "realdata-med", "file": "model_biodecision.py", "repo": "lighteternal/biodecision-v2-4b",
+                    "weights_dir": "biodecision-v2-4b", "min_vram_gb": 16, "python": "3.12", "max_options": 24,
+                    "label": "BioDecision v2 4B"},
+    "MEDDECIDER27": {"env": "realdata-med", "file": "model_meddecider.py", "repo": "lion-ai/MedDecider-27B",
+                     "weights_dir": "meddecider-27b", "base_repo": "Qwen/Qwen3.8-27B", "base_dir": "qwen3.8-27b",
+                     "min_vram_gb": 60, "python": "3.12", "max_options": 10, "label": "MedDecider-27B"},
+    "MEDDECIDER31": {"env": "realdata-med", "file": "model_meddecider.py", "repo": "lion-ai/MedDecider-31B",
+                     "weights_dir": "meddecider-31b", "base_repo": "google/gemma-4-31b-it", "base_dir": "gemma-4-31b-it",
+                     "min_vram_gb": 66, "python": "3.12", "max_options": 10, "label": "MedDecider-31B"},
 }
 TASKS = ("task1", "task23")
 # Name of the one question in each record. Clef writes it into its input ("ID: <name>"), so it is a neutral task name.

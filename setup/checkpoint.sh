@@ -1,6 +1,7 @@
 # Sourced by setup_*.sh after step()/die() are defined. Needs PROJECT_DIR, CHECKPOINT_REVISION, LOG_DIR.
-#   get_checkpoint REPO FOLDER: with HF_SHARED_CACHE set (main.py setup-envs --hf-cache DIR), verify the shared copy and
-#       link PROJECT_DIR/FOLDER to it; otherwise download the pinned revision into PROJECT_DIR/FOLDER.
+#   get_checkpoint REPO FOLDER [REVISION]: with HF_SHARED_CACHE set (main.py setup-envs --hf-cache DIR), verify the shared
+#       copy and link PROJECT_DIR/FOLDER to it; otherwise download the pinned revision into PROJECT_DIR/FOLDER.
+#       REVISION defaults to CHECKPOINT_REVISION (a MedDecider base model passes BASE_REVISION).
 #   $TESTED: setup/tested/<model>.txt, the pip freeze of the env that produced the recorded results (used as pip -c).
 #   compare_tested: list every package that differs from $TESTED; stop if a core package differs.
 SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,17 +11,17 @@ TESTED="$SETUP_DIR/tested/$MODEL_KEY.txt"
 [ -f "$TESTED" ] || die "tested package list $TESTED is missing"
 
 get_checkpoint() {
-    local repo="$1" folder="$2"
+    local repo="$1" folder="$2" revision="${3:-$CHECKPOINT_REVISION}"
     if [ -n "${HF_SHARED_CACHE:-}" ]; then
-        step "Using $repo @ ${CHECKPOINT_REVISION:0:8} from the shared cache $HF_SHARED_CACHE (no download)"
-        python "$CHECKPOINT_HELPER" link --cache "$HF_SHARED_CACHE" --repo "$repo" --revision "$CHECKPOINT_REVISION" \
+        step "Using $repo @ ${revision:0:8} from the shared cache $HF_SHARED_CACHE (no download)"
+        python "$CHECKPOINT_HELPER" link --cache "$HF_SHARED_CACHE" --repo "$repo" --revision "$revision" \
             --dest "$PROJECT_DIR/$folder" --record "$LOG_DIR/${folder}_source.json" \
             || die "the shared cache copy of $repo could not be used (details above)"
     else
         # never download through a link made by --hf-cache: that would write into the shared cache
         [ ! -L "$PROJECT_DIR/$folder" ] || die "$PROJECT_DIR/$folder links to $(readlink "$PROJECT_DIR/$folder"); rerun with --hf-cache, or delete the link to download a private copy"
-        step "Downloading $repo @ ${CHECKPOINT_REVISION:0:8} into $PROJECT_DIR/$folder"
-        hf download "$repo" --revision "$CHECKPOINT_REVISION" --local-dir "$PROJECT_DIR/$folder"
+        step "Downloading $repo @ ${revision:0:8} into $PROJECT_DIR/$folder"
+        hf download "$repo" --revision "$revision" --local-dir "$PROJECT_DIR/$folder" "${@:4}"
     fi
 }
 

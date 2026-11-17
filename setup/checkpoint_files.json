@@ -1,5 +1,5 @@
 {
- "created_utc": "2026-11-10T21:57:24Z",
+ "created_utc": "2026-11-16T23:30:27Z",
  "models": {
   "baselabs/elephant-1": {
    "revision": "b3f8a93462fb1051a9de031e94a7ff380e254072",
@@ -392,6 +392,446 @@
     "vision.svg": {
      "size": 4841,
      "hash": "d8a16ee376caffbf6aaa2e333bf91c06fe24a41a",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "lighteternal/biodecision-v2-4b": {
+   "revision": "181a2148dd6e8b815f220b2a090c27b6f69b4b9c",
+   "files": {
+    ".gitattributes": {
+     "size": 2010,
+     "hash": "6b550b97578af1840a1d18feee0d814f69dd6377",
+     "hash_kind": "git_blob_sha1"
+    },
+    "LICENSE": {
+     "size": 11544,
+     "hash": "f938136e3adacfd92be087f6e113b5d6d97f678f",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 31613,
+     "hash": "1016907027453c355e85249ef01d6a0746c98915",
+     "hash_kind": "git_blob_sha1"
+    },
+    "assets/biodecision-4b-v2-film-poster.jpg": {
+     "size": 147968,
+     "hash": "5170d36216d1c681a3a904be1542a800f91497a5a666ced806cd462feb986a67",
+     "hash_kind": "sha256"
+    },
+    "assets/biodecision-4b-v2-film.mp4": {
+     "size": 25198726,
+     "hash": "930ff64ffcfebff2adb8610e154c6e6a10ff884d2b403ee532b9f8a96d82dde8",
+     "hash_kind": "sha256"
+    },
+    "biodecision_config.json": {
+     "size": 1155,
+     "hash": "6ac36d0dc75b5075a249a6119a6ff22a3fc2b020",
+     "hash_kind": "git_blob_sha1"
+    },
+    "biodecision_server.py": {
+     "size": 12216,
+     "hash": "1511b93adcaa2e888b4d8265698e703423a7586d",
+     "hash_kind": "git_blob_sha1"
+    },
+    "chat_template.jinja": {
+     "size": 7756,
+     "hash": "a585dec894e63da457d9440ec6aa7caa16d20860",
+     "hash_kind": "git_blob_sha1"
+    },
+    "confidence.png": {
+     "size": 157063,
+     "hash": "dda850a0504f0320fbc5f169ab6fba4c97ad2fc11ac37c07aa9456a43df4e27e",
+     "hash_kind": "sha256"
+    },
+    "config.json": {
+     "size": 3161,
+     "hash": "557d961b205319c6a7da5f757f565b69b3967b7d",
+     "hash_kind": "git_blob_sha1"
+    },
+    "data.png": {
+     "size": 194492,
+     "hash": "e2bd3b714c7731cb0f3f882485e16e1900e3821fca3ebe9f6c03f2b69fa2550b",
+     "hash_kind": "sha256"
+    },
+    "latency.png": {
+     "size": 142358,
+     "hash": "6371d786024352cc360950caed8f8392881e650d2cb6c790478fc31d501643a7",
+     "hash_kind": "sha256"
+    },
+    "merges.txt": {
+     "size": 3353259,
+     "hash": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model.safetensors-00001-of-00002.safetensors": {
+     "size": 5329398720,
+     "hash": "355067b0325f7d01754c54aaaefe971c6232442308729a0b087bc246bc9d24ce",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors-00002-of-00002.safetensors": {
+     "size": 3990429440,
+     "hash": "c0474a4ea94da5f13948a198326d294fa83004419468d10fed1e3d6eb1d1f286",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors.index.json": {
+     "size": 76196,
+     "hash": "fddda6039f7c1d17260c9e923b8a72fd025d9a86",
+     "hash_kind": "git_blob_sha1"
+    },
+    "new_families.png": {
+     "size": 278526,
+     "hash": "3d831b241199e925c5737fe00deaf1683c66299f7033f7a101c6d125fc203373",
+     "hash_kind": "sha256"
+    },
+    "preprocessor_config.json": {
+     "size": 390,
+     "hash": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+     "hash_kind": "git_blob_sha1"
+    },
+    "temperatures.json": {
+     "size": 2628,
+     "hash": "ebc099b901190720c92981f2c5a9df8325e54397",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 12807982,
+     "hash": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 16710,
+     "hash": "eda48d3e75a8e59a8479ee4ec8b37f76e711d9c1",
+     "hash_kind": "git_blob_sha1"
+    },
+    "v1_to_v2.png": {
+     "size": 115691,
+     "hash": "da38953114561b48dfce8f57cb913316d47f85236cfd8e80d9baad9a8a184980",
+     "hash_kind": "sha256"
+    },
+    "video_preprocessor_config.json": {
+     "size": 385,
+     "hash": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe",
+     "hash_kind": "git_blob_sha1"
+    },
+    "vocab.json": {
+     "size": 6722759,
+     "hash": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+     "hash_kind": "git_blob_sha1"
+    },
+    "vs_jev.png": {
+     "size": 382629,
+     "hash": "2ff4c8d49bee6822548b21a24416b8956da7b604e01975d400197b0df1266019",
+     "hash_kind": "sha256"
+    }
+   }
+  },
+  "lion-ai/MedDecider-27B": {
+   "revision": "3df3e5edc9de9a719800ced2b510932e076371af",
+   "files": {
+    ".gitattributes": {
+     "size": 1519,
+     "hash": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "EVALUATION.md": {
+     "size": 4433,
+     "hash": "25ce4ee8fbc5de0686a5a0c833c1e30d1c1b8057",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 6071,
+     "hash": "1e6f682750eace0451fe22f1ba1840ab11b98ef3",
+     "hash_kind": "git_blob_sha1"
+    },
+    "adapter_config.json": {
+     "size": 1257,
+     "hash": "fe1bc6e8358f5698f1650c9251bfc177787fe946",
+     "hash_kind": "git_blob_sha1"
+    },
+    "adapter_model.safetensors": {
+     "size": 233592584,
+     "hash": "22c3d3589f5c3f2b5dd5a7090175b785d64ac82cbd1d8443f28a3d42e52f10ee",
+     "hash_kind": "sha256"
+    },
+    "meddecider_config.json": {
+     "size": 1542,
+     "hash": "3194bd9d0dc617c067f7fa68fc7677d91ddc9065",
+     "hash_kind": "git_blob_sha1"
+    },
+    "meddecider_infer.py": {
+     "size": 6419,
+     "hash": "19e664eed36bbb0f23e04647685b7e5aea3c36ad",
+     "hash_kind": "git_blob_sha1"
+    },
+    "train_args.json": {
+     "size": 386,
+     "hash": "e9dac1f0926d53e544a441e7f084ee6af0e16aa9",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "lion-ai/MedDecider-31B": {
+   "revision": "035f4543edf46202347515cda8201f1457b1d5fb",
+   "files": {
+    ".gitattributes": {
+     "size": 1519,
+     "hash": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 12700,
+     "hash": "e9570a290035d18fdcfc2e22a3ddde0f65c50cf0",
+     "hash_kind": "git_blob_sha1"
+    },
+    "adapter_config.json": {
+     "size": 15542,
+     "hash": "54189cc6a8a934ab77742dc2b41875c9400ee1e7",
+     "hash_kind": "git_blob_sha1"
+    },
+    "adapter_model.safetensors": {
+     "size": 267419888,
+     "hash": "07bb07b51223f40257c60a0af68a58745e36d46cc0b6f50182136de55d40f765",
+     "hash_kind": "sha256"
+    },
+    "meddecider_config.json": {
+     "size": 824,
+     "hash": "5ee15edeb3d63a4a56607eb23f6e054b96ae2616",
+     "hash_kind": "git_blob_sha1"
+    },
+    "meddecider_infer.py": {
+     "size": 4835,
+     "hash": "bd3183fe3c137e419d52e5a6c044778aec6e45a1",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "Qwen/Qwen3.8-27B": {
+   "revision": "8c0b3d30f3ae96f5c7f774de704bf0ada83e422a",
+   "files": {
+    ".gitattributes": {
+     "size": 1570,
+     "hash": "52373fe24473b1aa44333d318f578ae6bf04b49b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "LICENSE": {
+     "size": 11544,
+     "hash": "f938136e3adacfd92be087f6e113b5d6d97f678f",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 65056,
+     "hash": "4d43b0e391581a8857be5d29f7a2ba527781ba78",
+     "hash_kind": "git_blob_sha1"
+    },
+    "chat_template.jinja": {
+     "size": 8952,
+     "hash": "c0c686f9c38d70d179fb7b5f5aa7530bc913dda3",
+     "hash_kind": "git_blob_sha1"
+    },
+    "config.json": {
+     "size": 4312,
+     "hash": "706cebd746c4b6f2b1d1f892630867acfdfd3df8",
+     "hash_kind": "git_blob_sha1"
+    },
+    "crc32.txt": {
+     "size": 238,
+     "hash": "6de5ee6a0c6596744baee911af0a5cdcb8d99a1e",
+     "hash_kind": "git_blob_sha1"
+    },
+    "generation_config.json": {
+     "size": 202,
+     "hash": "023756cfadf88e5bf69eefeee3e172f38c448d64",
+     "hash_kind": "git_blob_sha1"
+    },
+    "merges.txt": {
+     "size": 3353259,
+     "hash": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model-00001-of-00018.safetensors": {
+     "size": 3966730552,
+     "hash": "ba0ce20aae489ad196733da5064bcdf159a1fe84f53336648196e1ebb7751b1c",
+     "hash_kind": "sha256"
+    },
+    "model-00002-of-00018.safetensors": {
+     "size": 3043080328,
+     "hash": "06a148c01bfbe3faa14a5f184a7ff29a706f7ae1c8b2705d2058e26d17a001fb",
+     "hash_kind": "sha256"
+    },
+    "model-00003-of-00018.safetensors": {
+     "size": 2542796952,
+     "hash": "2e1bf62cbcd406eaa64b60d10353e1f0ef4039d0976e56f05cabe953454f9968",
+     "hash_kind": "sha256"
+    },
+    "model-00004-of-00018.safetensors": {
+     "size": 3988973152,
+     "hash": "511e34063187882659753c4d93f3859f93c019fd438d8813071921c81d9a3f1a",
+     "hash_kind": "sha256"
+    },
+    "model-00005-of-00018.safetensors": {
+     "size": 2099339864,
+     "hash": "635cb53446dc74f219740fc59e18b774f877b803b9722e289ca62575a6efa701",
+     "hash_kind": "sha256"
+    },
+    "model-00006-of-00018.safetensors": {
+     "size": 3979553696,
+     "hash": "0bc5214fac607f0e6cc92eec3789d4b8559410ef9fce66621ba8158e8410dae0",
+     "hash_kind": "sha256"
+    },
+    "model-00007-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "80b0c49033e9a0d5762562aa12f4acdb7f54da586f3d0110f28c48d91cf07892",
+     "hash_kind": "sha256"
+    },
+    "model-00008-of-00018.safetensors": {
+     "size": 3979553696,
+     "hash": "7192c5b66185d3592927daabee1cc19e6f6e0ce75988ee20e824b624765fda79",
+     "hash_kind": "sha256"
+    },
+    "model-00009-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "af3c48cc37af44f3db6ae0579baf019180d48d9c527caa0a1f03ff85813a56d8",
+     "hash_kind": "sha256"
+    },
+    "model-00010-of-00018.safetensors": {
+     "size": 3979553696,
+     "hash": "163490a76f3bea3a40855b7efc04ce6d27afaf1a34f0bbde495b9491f76457c9",
+     "hash_kind": "sha256"
+    },
+    "model-00011-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "5f3ae1b948aeee39da77aec558e8236cd65fe4d7cb7686a76bb007acc563c6d8",
+     "hash_kind": "sha256"
+    },
+    "model-00012-of-00018.safetensors": {
+     "size": 3979553696,
+     "hash": "a3de1c7114677a8f5ac5c4892c90e8238ea5c1e2038c80e757dfc87c3902ca55",
+     "hash_kind": "sha256"
+    },
+    "model-00013-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "06ab79a41f74c9c5cb734816feb0c7fc364104b227165ee7391231e1155aa02a",
+     "hash_kind": "sha256"
+    },
+    "model-00014-of-00018.safetensors": {
+     "size": 3979553696,
+     "hash": "4138ed94603065ba884bbcadedb04d7718bb40117e85e6f5c6fc5b9c05b7a85b",
+     "hash_kind": "sha256"
+    },
+    "model-00015-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "69224e27b9de4e7dbf6fc936c6eaae08447bda3b80a6c31a871ab451173afd22",
+     "hash_kind": "sha256"
+    },
+    "model-00016-of-00018.safetensors": {
+     "size": 3979564040,
+     "hash": "73cb9a1089fb6155cb648609478d6633be8a5c7d9ca5a05bc8925ce8a553cefe",
+     "hash_kind": "sha256"
+    },
+    "model-00017-of-00018.safetensors": {
+     "size": 2108759344,
+     "hash": "beb51f01056142ac4984bd800507b0dd0fd18de57f8e9ef6ea41d1a3598983a8",
+     "hash_kind": "sha256"
+    },
+    "model-00018-of-00018.safetensors": {
+     "size": 3392197344,
+     "hash": "1d3479509e21494658f9b64d317f5ea8e55c4025d28c702d6c4d0b356ce8ea06",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors.index.json": {
+     "size": 112216,
+     "hash": "da35e3c564457dface7d138f0b6cac284ff8958c",
+     "hash_kind": "git_blob_sha1"
+    },
+    "preprocessor_config.json": {
+     "size": 390,
+     "hash": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 12809320,
+     "hash": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 17928,
+     "hash": "5de744b3fca2129d7186979ae47c06be33903243",
+     "hash_kind": "git_blob_sha1"
+    },
+    "video_preprocessor_config.json": {
+     "size": 385,
+     "hash": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe",
+     "hash_kind": "git_blob_sha1"
+    },
+    "vocab.json": {
+     "size": 6722759,
+     "hash": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+     "hash_kind": "git_blob_sha1"
+    }
+   }
+  },
+  "google/gemma-4-31b-it": {
+   "revision": "842da3794eaa0b77d5f08bae87a17459d91ff475",
+   "files": {
+    ".eval_results/mmmu_pro.yaml": {
+     "size": 182,
+     "hash": "1cca96d18f95ececc0f11e5ee4a448bd7199039c",
+     "hash_kind": "git_blob_sha1"
+    },
+    ".gitattributes": {
+     "size": 1708,
+     "hash": "ddcb389f1c4efd0f6ec18e8925435134b04580da",
+     "hash_kind": "git_blob_sha1"
+    },
+    "README.md": {
+     "size": 27963,
+     "hash": "abf7c941ad9bb8d4fe2e350b6e6bf0e3ba05a28d",
+     "hash_kind": "git_blob_sha1"
+    },
+    "chat_template.jinja": {
+     "size": 18683,
+     "hash": "4741bf6e4132ba23a5537f9d6e74e9a6d613d7cd",
+     "hash_kind": "git_blob_sha1"
+    },
+    "config.json": {
+     "size": 4621,
+     "hash": "5f291aa9973fbb38982f9bade924989edc7b895d",
+     "hash_kind": "git_blob_sha1"
+    },
+    "generation_config.json": {
+     "size": 208,
+     "hash": "e605bb4523b1462ea9d9a3810b9e3ecf7ab7b1f6",
+     "hash_kind": "git_blob_sha1"
+    },
+    "model-00001-of-00002.safetensors": {
+     "size": 49784788364,
+     "hash": "eeef8791537bc04f110967c513149e037d2a9ae97d49add7291ebfa62806bbfa",
+     "hash_kind": "sha256"
+    },
+    "model-00002-of-00002.safetensors": {
+     "size": 12761549884,
+     "hash": "018912220f559f7025d60333e0996183cd538aa77ad6f4988a89ce47be681f10",
+     "hash_kind": "sha256"
+    },
+    "model.safetensors.index.json": {
+     "size": 120246,
+     "hash": "17fcef4a0ceb639c8ad4e2f7719f70aaff7de63b",
+     "hash_kind": "git_blob_sha1"
+    },
+    "processor_config.json": {
+     "size": 1689,
+     "hash": "5465974d23e1eca2c46c2809b26c997946ce0d90",
+     "hash_kind": "git_blob_sha1"
+    },
+    "tokenizer.json": {
+     "size": 32169626,
+     "hash": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f",
+     "hash_kind": "sha256"
+    },
+    "tokenizer_config.json": {
+     "size": 3082,
+     "hash": "6068e357379d36f823c377e30efb101fa2c67fe4",
      "hash_kind": "git_blob_sha1"
     }
    }

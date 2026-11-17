@@ -14,11 +14,27 @@
       "revision": "a67fa2808b5d91a4db62629beb14eba6d3f3e53c",
       "runtime_url": "https://github.com/nace-ai/drex-decision-models.git",
       "runtime_revision": "d2fd26cdf211f87b9a6b1261995528629c9e1401"
+    },
+    "BIODECISION": {
+      "repo": "lighteternal/biodecision-v2-4b",
+      "revision": "181a2148dd6e8b815f220b2a090c27b6f69b4b9c"
+    },
+    "MEDDECIDER27": {
+      "repo": "lion-ai/MedDecider-27B",
+      "revision": "3df3e5edc9de9a719800ced2b510932e076371af",
+      "base_repo": "Qwen/Qwen3.8-27B",
+      "base_revision": "8c0b3d30f3ae96f5c7f774de704bf0ada83e422a"
+    },
+    "MEDDECIDER31": {
+      "repo": "lion-ai/MedDecider-31B",
+      "revision": "035f4543edf46202347515cda8201f1457b1d5fb",
+      "base_repo": "google/gemma-4-31b-it",
+      "base_revision": "842da3794eaa0b77d5f08bae87a17459d91ff475"
     }
   },
   "longhealth": {
     "revision": "479922279ce8fa528fe2cd87d854c6a2f8365d21",
     "dataset_sha256": "82d34d9da47ab279d7aa89a6bdf298c0ac79f1e506e1dd0a3ea69a1ad5e2cb45"
   },
-  "note": "Elephant's OneJev runtime is pinned by the checkpoint's own setup.sh; Clef's code ships inside its checkpoint."
+  "note": "Elephant's OneJev runtime is pinned by the checkpoint's own setup.sh; Clef's code ships inside its checkpoint. Medical models (BIODECISION, MEDDECIDER27/31) and their bases are pinned as in GeminiOps/MedDecision."
 }

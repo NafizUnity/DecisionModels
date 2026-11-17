@@ -33,7 +33,7 @@ fi
 source "$CONF"
 : "${BASE:?BASE is not set in $CONF}"; MODELS="${MODELS:-$BASE/models}"
 HF_CACHE="${HF_CACHE:-}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"
-RUN_MODELS="${RUN_MODELS:-ELEPHANT DREX CLEF}"; RUN_MODELS="${RUN_MODELS^^}"
+RUN_MODELS="${RUN_MODELS:-ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31}"; RUN_MODELS="${RUN_MODELS^^}"
 mkdir -p "$MODELS/setup_logs"
 LOG="$MODELS/setup_logs/realdata_setup_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -81,9 +81,16 @@ find_conda() {
     return 1
 }
 
-declare -A ENV_OF=([ELEPHANT]=realdata-elephant [CLEF]=realdata-clef [DREX]=realdata-drex)
-declare -A WDIR=([ELEPHANT]=elephant-1 [CLEF]=clef [DREX]=drex-max-v1)
-declare -A REPO=([ELEPHANT]=baselabs/elephant-1 [CLEF]=Cloudflare/clef [DREX]=nace-ai/drex-max-v1)
+# as lh_core.MODELS_INFO; the three medical models share one env, realdata-med (setup/setup_med.sh)
+declare -A ENV_OF=([ELEPHANT]=realdata-elephant [CLEF]=realdata-clef [DREX]=realdata-drex
+                   [BIODECISION]=realdata-med [MEDDECIDER27]=realdata-med [MEDDECIDER31]=realdata-med)
+declare -A WDIR=([ELEPHANT]=elephant-1 [CLEF]=clef [DREX]=drex-max-v1
+                 [BIODECISION]=biodecision-v2-4b [MEDDECIDER27]=meddecider-27b [MEDDECIDER31]=meddecider-31b)
+declare -A REPO=([ELEPHANT]=baselabs/elephant-1 [CLEF]=Cloudflare/clef [DREX]=nace-ai/drex-max-v1
+                 [BIODECISION]=lighteternal/biodecision-v2-4b [MEDDECIDER27]=lion-ai/MedDecider-27B [MEDDECIDER31]=lion-ai/MedDecider-31B)
+declare -A BASE_REPO=([MEDDECIDER27]=Qwen/Qwen3.8-27B [MEDDECIDER31]=google/gemma-4-31b-it)   # MedDecider: LoRA adapter + base model
+declare -A BASE_DIR=([MEDDECIDER27]=qwen3.8-27b [MEDDECIDER31]=gemma-4-31b-it)
+GENERAL_MODELS="ELEPHANT CLEF DREX"; ALL_MODELS="$GENERAL_MODELS BIODECISION MEDDECIDER27 MEDDECIDER31"
 lock() { "$PYB" -c 'import json,sys; print(json.load(open(sys.argv[1]))["models"][sys.argv[2]].get(sys.argv[3], ""))' \
            "$HERE/revisions.lock.json" "$1" "$2"; }
 env_python() {
@@ -105,13 +112,22 @@ model_ready() {
         bad "$m: checkpoint ${REPO[$m]}@${rev:0:8} at $MODELS/${WDIR[$m]}"; return 1
     fi
     ok "$m: checkpoint ${REPO[$m]}@${rev:0:8}"
+    if [ -n "${BASE_REPO[$m]:-}" ]; then
+        local brev; brev="$(lock "$m" base_revision)"
+        if ! "$PYB" "$HERE/setup/shared_cache.py" check --repo "${BASE_REPO[$m]}" --revision "$brev" --dest "$MODELS/${BASE_DIR[$m]}" \
+             "${cache_arg[@]}" | sed 's/^/        /'; then
+            bad "$m: base model ${BASE_REPO[$m]}@${brev:0:8} at $MODELS/${BASE_DIR[$m]}"; return 1
+        fi
+        ok "$m: base model ${BASE_REPO[$m]}@${brev:0:8}"
+    fi
     if [ "$m" = DREX ]; then
         local want have; want="$(lock DREX runtime_revision)"
         have="$(git -C "$MODELS/drex-decision-models" rev-parse HEAD 2>/dev/null || true)"
         if [ "$have" != "$want" ]; then bad "$m: runtime drex-decision-models at ${want:0:8} (found: ${have:-none})"; return 1; fi
         ok "$m: runtime drex-decision-models @ ${want:0:8}"
     fi
-    if ! MODEL="$m" MODELS_DIR="$MODELS" TESTED="$HERE/setup/tested/${m,,}.txt" PYTHONDONTWRITEBYTECODE=1 \
+    local tested="${m,,}"; [ "${ENV_OF[$m]}" = realdata-med ] && tested=med
+    if ! MODEL="$m" MODELS_DIR="$MODELS" TESTED="$HERE/setup/tested/$tested.txt" PYTHONDONTWRITEBYTECODE=1 \
          "$py" - <<'PY' 2>&1 | sed 's/^/        /'
 import os, re, subprocess, sys
 m, models = os.environ["MODEL"], os.environ["MODELS_DIR"]
@@ -142,6 +158,11 @@ elif m == "CLEF":
 elif m == "DREX":
     sys.path.insert(0, os.path.join(models, "drex-decision-models"))
     from drex_max.model import DecisionModel  # noqa: F401
+else:   # BIODECISION, MEDDECIDER27, MEDDECIDER31: the model repo's own inference module
+    import peft, fla  # noqa: F401,E401
+    folder = {"BIODECISION": "biodecision-v2-4b", "MEDDECIDER27": "meddecider-27b", "MEDDECIDER31": "meddecider-31b"}[m]
+    sys.path.insert(0, os.path.join(models, folder))
+    __import__("biodecision_server" if m == "BIODECISION" else "meddecider_infer")
 print("imports ok")
 PY
     then bad "$m: packages/imports in ${ENV_OF[$m]}"; return 1; fi
@@ -189,7 +210,7 @@ else PYB="$(command -v python3)"; INSTALLER=""; fi
 say "Models: ${RUN_MODELS}"
 TODO=()
 for m in $RUN_MODELS; do
-    [ -n "${ENV_OF[$m]:-}" ] || { not_ready "unknown model $m in RUN_MODELS (ELEPHANT, CLEF, DREX)"; continue; }
+    [ -n "${ENV_OF[$m]:-}" ] || { not_ready "unknown model $m in RUN_MODELS ($ALL_MODELS)"; continue; }
     if [ -n "$CONDA" ] && model_ready "$m"; then :; else TODO+=("$m"); fi
 done
 
@@ -202,7 +223,7 @@ if [ "$NEED_MINIFORGE" = 1 ] || [ ${#TODO[@]} -gt 0 ]; then
     echo "    pypi.org, download.pytorch.org          PyTorch, transformers and other pinned packages"
     echo "    github.com                              OneJev (Elephant), drex-decision-models (Drex), pinned commits"
     if [ -n "$HF_CACHE" ]; then echo "    (no model weights: checkpoints are linked from $HF_CACHE after verification)"
-    else echo "    huggingface.co                          the pinned checkpoints into $MODELS (about 120 GB)"; fi
+    else echo "    huggingface.co                          the pinned checkpoints into $MODELS (about 120 GB general, 128 GB medical)"; fi
 fi
 if [ "$CHECK_ONLY" = 1 ] && { [ "$NEED_MINIFORGE" = 1 ] || [ ${#TODO[@]} -gt 0 ]; }; then
     not_ready "missing: $([ "$NEED_MINIFORGE" = 1 ] && echo -n "Miniforge ")${TODO[*]:-} (rerun without --check-only to install)"
@@ -246,8 +267,11 @@ elif [ ! -f "$INDEX" ]; then not_ready "INDEX $INDEX not found"
 elif [ ${#NOT_READY[@]} -gt 0 ] || placeholder "$DATA"; then echo "  skip  description check (fix the items above first)"
 else
     say "Checking the description index (coverage, duplicates, tokens per model; CPU only)"
+    # token counts use each general model's own prompt code; the medical models' prompts are short and checked at load
+    desc_models=""; for m in $RUN_MODELS; do [[ " $GENERAL_MODELS " == *" $m "* ]] && desc_models+="$m "; done
+    [ -n "$desc_models" ] || desc_models="$GENERAL_MODELS"
     # shellcheck disable=SC2086
-    if "$PYB" "$HERE/check_descriptions.py" --data "$DATA" --index "$INDEX" --weights-dir "$MODELS" --models $RUN_MODELS \
+    if "$PYB" "$HERE/check_descriptions.py" --data "$DATA" --index "$INDEX" --weights-dir "$MODELS" --models $desc_models \
          --stride 20 --out "$MODELS/setup_logs/desc_check.json"; then ok "INDEX $INDEX"
     else not_ready "check_descriptions.py reported a FAIL (see above; counts in $MODELS/setup_logs/desc_check.json)"; fi
 fi

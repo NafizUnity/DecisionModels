@@ -25,5 +25,5 @@ RESULTS_DIR="$HOME/DecisionModels/RealData/results"
 
 # Physical GPU index to run on, the models to run (in this order) and the smoke-test sample (every Nth request).
 GPU=0
-RUN_MODELS="ELEPHANT DREX CLEF"
+RUN_MODELS="ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31"
 SMOKE_STRIDE=100

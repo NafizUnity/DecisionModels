@@ -31,12 +31,20 @@ sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
 from run_decision_model import cell_metrics, load_requests, n_tied_top, order_for, rank_options  # noqa: E402
 
-KS = (1, 5, 10, 20)          # cutoffs for hit@k, taken from the ranking over ALL options (not a cut of the input)
+LADDER = (1, 3, 5, 10, 20, 50, 100, 200)   # hit@k cutoffs, taken from the ranking over ALL options of a request
 MAX_OPTIONS = 255            # Elephant (schema MAX_CHOICE_OPTIONS) and Drex (255 answer labels); Clef has no fixed limit
 ORDERS = ("original", "shuf1")
 SOURCES = ("csv_dense", "snomed_fsn", "snomed_syn", "rrf_csv+fsn", "rrf_csv+syn", "rrf_fsn+syn", "rrf_csv+fsn+syn")
-NAMES = {"ELEPHANT": "Elephant-1", "CLEF": "Clef", "DREX": "Drex Max"}
+NAMES = {m: info["label"] for m, info in lh_core.MODELS_INFO.items()}
 QUESTION = "Which ICD-10-CA code best matches the diagnosis described above?"
+
+
+def cutoffs(top, longest):
+    """hit@k cutoffs: the ladder up to K for a --top K build (K itself included: --top 10 -> 1,3,5,10; --top 20 ->
+    1,3,5,10,20; --top 15 -> 1,3,5,10,15); for whole lists, the ladder up to the longest list."""
+    k_max = top if top else longest
+    ks = [k for k in LADDER if k <= k_max]
+    return ks + [top] if top and top not in ks else ks
 
 
 def merged_context(entity, query):
@@ -156,14 +164,17 @@ def cmd_build(args):
                                  "type": "choice", "instructions": QUESTION,
                                  "criteria": {c: desc[c] if desc else None for c in codes}}}}})
     held = "a source's whole ranking" if top is None else f"the first {top} codes of a source's ranking"
+    KS = cutoffs(top, max(max(L) for L in lengths.values()))
     print(f"{len(data)} entities. Every request holds {held}. Retriever: share of entities with the reference code "
           f"within its top k" + (f" (k above {top} cannot exceed @{top}):" if top else ":"))
-    print(f"  {'source':<16} {'codes min/median/max':>20}  " + "  ".join(f"@{k:<4}" for k in KS) + "  in list")
+    print(f"  {'source':<16} {'requests':>8} {'codes min/median/max':>20}  " + "  ".join(f"@{k:<4}" for k in KS)
+          + "  in list (n)")
     for source in SOURCES:
         L, R = lengths[source], retr_rank[source]
-        print(f"  {source:<16} {min(L):>6}/{statistics.median(L):>5g}/{max(L):<6}  "
+        n_in = sum(r is not None for r in R)
+        print(f"  {source:<16} {len(R) * len(ORDERS):>8} {min(L):>6}/{statistics.median(L):>5g}/{max(L):<6}  "
               + "  ".join(f"{sum(r is not None and r <= k for r in R) / len(R):.3f}" for k in KS)
-              + f"  {sum(r is not None for r in R) / len(R):.3f}")
+              + f"  {n_in / len(R):.3f} ({n_in} of {len(R)} entities)")
     if not any(r is not None for R in retr_rank.values() for r in R):
         sys.exit("STOPPED: no reference code appears in any ranking. The code formats probably differ "
                  "(dots, case or spaces); run inspect_rankings.py and fix the file. Nothing was written.")
@@ -190,7 +201,7 @@ def model_rank(r, p):
     return rank_options(list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"]), p["probabilities"])[r["gt_letter"]]
 
 
-def hit_metrics(items):
+def hit_metrics(items, KS):
     """hit@k for the model and for the retriever on the same requests (a request without the reference code is a miss), MRR."""
     n = len(items)
     nan = float("nan")
@@ -250,6 +261,8 @@ def cmd_report(args):
     if not preds:
         sys.exit(f"no {'smoke-test ' if args.smoke else ''}predictions found in {out}"
                  + ("" if args.smoke else " (for the smoke test, add --smoke)"))
+    tops = {r.get("top") for r in reqs.values()}
+    KS = cutoffs(max(tops) if None not in tops else None, max(r["n_options"] for r in reqs.values()))
     hit_cols = [f"model_hit@{k}" for k in KS] + ["model_mrr"] + [f"retriever_hit@{k}" for k in KS] + ["retriever_mrr"]
     rows = []
     for source in SOURCES:
@@ -257,7 +270,7 @@ def cmd_report(args):
             for model, done in preds.items():
                 mine = [i for i, r in reqs.items() if r["source"] == source and r["order"] == order and i in selected[model]]
                 items = [(reqs[i], done[i]) for i in mine if i in done]
-                h, c = hit_metrics(items), cell_metrics(items)
+                h, c = hit_metrics(items, KS), cell_metrics(items)
                 rows.append({"source": source, "order": order, "model": NAMES[model], "n": h["n"], "n_expected": len(mine),
                              "median_options": statistics.median(reqs[i]["n_options"] for i in mine) if mine else float("nan"),
                              "in_list": h["in_list"], **{k: h[k] for k in hit_cols},
@@ -267,8 +280,8 @@ def cmd_report(args):
     for model, done in preds.items():
         for order in ORDERS:
             items = [(reqs[i], done[i]) for i in sorted(selected[model]) if i in done and reqs[i]["order"] == order]
-            summary.append((NAMES[model], order, hit_metrics(items), sum(reqs[i]["order"] == order for i in selected[model])))
-    head = f"{'model':<11} {'order':<9} {'n ok':>11} " + " ".join(f"{'hit@' + str(k):>6}" for k in KS) + f" {'MRR':>6}  | retriever " \
+            summary.append((NAMES[model], order, hit_metrics(items, KS), sum(reqs[i]["order"] == order for i in selected[model])))
+    head = f"{'model':<17} {'order':<9} {'n ok':>11} " + " ".join(f"{'hit@' + str(k):>6}" for k in KS) + f" {'MRR':>6}  | retriever " \
            + " ".join(f"{'@' + str(k):>5}" for k in KS) + f" {'MRR':>6} | tied"
     if "CLEF" in preds:
         pairs, differ = clef_order_check(reqs, preds["CLEF"])
@@ -276,9 +289,27 @@ def cmd_report(args):
                      + (" (expected 0: Clef sorts options by code; investigate)" if differ else " (as expected)")
                      + ("" if pairs else " (no pairs: the smoke sample held no matching requests)"))
         print(clef_line)
+    counts = []
+    for source in SOURCES:
+        mine = [r for r in reqs.values() if r["source"] == source]
+        ents = {r["entity_id"] for r in mine}
+        ents_in = {r["entity_id"] for r in mine if r["answerable"]}
+        counts.append({"source": source, "entities": len(ents), "requests": len(mine),
+                       "per_order": {o: sum(r["order"] == o for r in mine) for o in ORDERS},
+                       "options_median": statistics.median(r["n_options"] for r in mine) if mine else 0,
+                       "in_list": len(ents_in), "not_in_list": len(ents) - len(ents_in),
+                       "results": {m: (sum(i in done for i in selected[m] if reqs[i]["source"] == source),
+                                       sum(reqs[i]["source"] == source for i in selected[m])) for m, done in preds.items()}})
+    print("Requests per retrieval source (one request = one entity x one option order):")
+    print(f"  {'source':<16} {'entities':>8} {'requests':>8} {'options':>7} {'ref in list':>11} {'not in list':>11}  "
+          + "  ".join(f"{NAMES[m]}" for m in preds))
+    for c in counts:
+        print(f"  {c['source']:<16} {c['entities']:>8} {c['requests']:>8} {c['options_median']:>7g} {c['in_list']:>11} "
+              f"{c['not_in_list']:>11}  " + "  ".join(f"{c['results'][m][0]}/{c['results'][m][1]}" for m in preds))
+    print(f"  {'total':<16} {len({r['entity_id'] for r in reqs.values()}):>8} {len(reqs):>8}")
     print(head)
     for name, order, h, n_exp in summary:
-        print(f"{name:<11} {order:<9} {h['n']:>5}/{n_exp:<5} " + " ".join(f"{h[f'model_hit@{k}']:>6.3f}" for k in KS)
+        print(f"{name:<17} {order:<9} {h['n']:>5}/{n_exp:<5} " + " ".join(f"{h[f'model_hit@{k}']:>6.3f}" for k in KS)
               + f" {h['model_mrr']:>6.3f}  |           " + " ".join(f"{h[f'retriever_hit@{k}']:>5.3f}" for k in KS)
               + f" {h['retriever_mrr']:>6.3f} | {h['tied_top']}")
     with open(out / f"ranking_results{suffix}.csv", "w", newline="") as fh:
@@ -286,7 +317,6 @@ def cmd_report(args):
         w.writeheader()
         w.writerows(rows)
     text = "codes with descriptions" if any(r.get("option_text", "code") != "code" for r in reqs.values()) else "bare codes"
-    tops = {r.get("top") for r in reqs.values()}
     lists = "whole retrieval lists" if tops == {None} else f"the retriever's top {'/'.join(map(str, sorted(t or 0 for t in tops)))}"
     md = [f"# Decision models re-ranking {lists} (no notes, {text})" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
           ("Each request gives the model every code in one source's ranking. " if tops == {None} else
@@ -297,6 +327,16 @@ def cmd_report(args):
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
           "is the same in both orders.", "",
           *([clef_line, ""] if "CLEF" in preds else []),
+          "## Requests per retrieval source", "",
+          "One request = one entity x one option order. 'Ref in list': entities whose reference code is among the options "
+          "(the others are misses for every model). Model columns: requests with a result / requests selected.", "",
+          "| Source | Entities | Requests | Per order | Options (median) | Ref in list | Not in list | "
+          + " | ".join(NAMES[m] for m in preds) + " |",
+          "|---|---|---|---|---|---|---|" + "---|" * len(preds),
+          *[f"| {c['source']} | {c['entities']} | {c['requests']} | " + " / ".join(f"{o} {c['per_order'][o]}" for o in ORDERS)
+            + f" | {c['options_median']:g} | {c['in_list']} | {c['not_in_list']} | "
+            + " | ".join(f"{c['results'][m][0]}/{c['results'][m][1]}" for m in preds) + " |" for c in counts],
+          f"| **total** | {len({r['entity_id'] for r in reqs.values()})} | {len(reqs)} | | | | | " + " | ".join("" for _ in preds) + " |", "",
           "## Summary (all sources pooled)", "",
           "| Model | Order | n ok | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | " + " | ".join(f"retriever @{k}" for k in KS) + " | retriever MRR | Tied top |"]
     md.append(separator(md[-1]))
@@ -327,6 +367,7 @@ def write_comparison(out, suffix=""):
         rows = list(csv.DictReader(fh))
     if not rows:
         sys.exit(f"STOPPED: {out / f'ranking_results{suffix}.csv'} is empty")
+    KS = sorted(int(c.split("@")[1]) for c in rows[0] if c.startswith("model_hit@"))   # the cutoffs the report used
     metrics = [f"hit@{k}" for k in KS] + ["mrr"]
     sources = [s for s in SOURCES if any(r["source"] == s for r in rows)]
     shown = [f"hit@{k}" for k in KS]

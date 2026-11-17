@@ -5,6 +5,7 @@
 #   bash realdata_run.sh --desc                # whole lists + descriptions     -> RESULTS_DIR/real_whole_list_desc
 #   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> RESULTS_DIR/real_top20_desc
 #   bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check   # quick check: about 2 requests per model
+#   Models that cannot score the lists are skipped: MedDecider-27B/31B take at most 10 options, BioDecision 24.
 #   options: --models "DREX CLEF"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
 #            --foreground  --report-only  --smoke-only (stop after the smoke test)  --smoke-n N (smoke sample of at least N)
 #
@@ -42,12 +43,15 @@ placeholder() { [[ -z "$1" || "$1" == /path/to/* ]]; }
 # shellcheck disable=SC1090
 source "$CONF"
 : "${BASE:?BASE is not set in $CONF}"; MODELS="${MODELS:-$BASE/models}"
-GPU="${GPU_ARG:-${GPU:-0}}"; RUN_MODELS="${MODELS_ARG:-${RUN_MODELS:-ELEPHANT DREX CLEF}}"; RUN_MODELS="${RUN_MODELS^^}"
+GPU="${GPU_ARG:-${GPU:-0}}"; RUN_MODELS="${MODELS_ARG:-${RUN_MODELS:-ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31}}"; RUN_MODELS="${RUN_MODELS^^}"
 SMOKE_STRIDE="${SMOKE_STRIDE:-100}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"
 if [ -n "$TOP" ] && ! [[ "$TOP" =~ ^[0-9]+$ && "$TOP" -ge 2 ]]; then stop "--top must be a whole number of 2 or more"; fi
 if [ -n "$SMOKE_N" ] && ! [[ "$SMOKE_N" =~ ^[0-9]+$ && "$SMOKE_N" -ge 1 ]]; then stop "--smoke-n must be a whole number of 1 or more"; fi
 if [ "$SMOKE_ONLY" = 1 ] && { [ "$SMOKE" = 0 ] || [ "$REPORT_ONLY" = 1 ]; }; then stop "--smoke-only cannot be combined with --no-smoke or --report-only"; fi
-for m in $RUN_MODELS; do [[ "$m" =~ ^(ELEPHANT|CLEF|DREX)$ ]] || stop "unknown model $m (ELEPHANT, CLEF, DREX)"; done
+for m in $RUN_MODELS; do
+    [[ "$m" =~ ^(ELEPHANT|CLEF|DREX|BIODECISION|MEDDECIDER27|MEDDECIDER31)$ ]] \
+        || stop "unknown model $m (ELEPHANT, CLEF, DREX, BIODECISION, MEDDECIDER27, MEDDECIDER31)"
+done
 
 # ---- the same clean shell as realdata_setup.sh, offline ---------------------------------------------------------------
 if declare -F module >/dev/null 2>&1; then module purge >/dev/null 2>&1 || true; fi
@@ -110,6 +114,30 @@ PY
     else
         [ -f "$RUN/requests.jsonl" ] || stop "--report-only: $RUN has no requests.jsonl"
     fi
+    if [ "$REPORT_ONLY" = 0 ]; then
+        # Skip every model that cannot score this folder's longest list (lh_core.MODELS_INFO max_options: MedDecider 10,
+        # BioDecision 24, the general models 255). --top 10 runs all six; --top 11..24 drops MedDecider; above 24 (or
+        # whole lists) only the general models run.
+        kept="$("$PY" - "$RUN/requests.jsonl" $RUN_MODELS <<'PY'
+import json, sys
+sys.path.insert(0, ".")
+import lh_core
+largest = max(r["n_options"] for r in map(json.loads, open(sys.argv[1], encoding="utf8")))
+keep = []
+for m in sys.argv[2:]:
+    limit = lh_core.MODELS_INFO[m]["max_options"]
+    if limit >= largest:
+        keep.append(m)
+    else:
+        print(f"[skip] {m}: scores at most {limit} options per request; this run's lists hold up to {largest} "
+              f"(use --top {limit} or less to include it)", file=sys.stderr)
+print(" ".join(keep))
+PY
+        )" || stop "could not read $RUN/requests.jsonl"
+        [ -n "$kept" ] || stop "none of the models ($RUN_MODELS) can score lists this long; use a smaller --top"
+        [ "$kept" = "$RUN_MODELS" ] || say "Models to run: $kept"
+        RUN_MODELS="$kept"; export REALDATA_RUN_MODELS="$kept"
+    fi
     if [ "$FOREGROUND" = 1 ]; then
         export REALDATA_STAGE=2
     else
@@ -125,7 +153,8 @@ fi
 # ---- Stage 2 ----------------------------------------------------------------------------------------------------------
 exec 9>"$RUN/.realdata_run.lock"
 flock -n 9 || stop "another realdata_run.sh is already working on $RUN"
-say "Stage 2 on $RUN (pid $$, GPU $GPU)"
+RUN_MODELS="${REALDATA_RUN_MODELS:-$RUN_MODELS}"   # stage 1 dropped the models that cannot score these lists
+say "Stage 2 on $RUN (pid $$, GPU $GPU, models $RUN_MODELS)"
 partial=()
 
 # run_model MODEL [--stride N]: one attempt plus one retry for requests without a result. Returns 0 only if all are ok.

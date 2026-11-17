@@ -40,7 +40,7 @@ from lh_core import MODELS_INFO, TASKS  # noqa: E402
 
 LONGHEALTH_REPO = HERE.parent / "LongHealth"
 LOCK_FILE = HERE / "revisions.lock.json"
-MODELS = ("ELEPHANT", "CLEF", "DREX")
+MODELS = ("ELEPHANT", "CLEF", "DREX", "BIODECISION", "MEDDECIDER27", "MEDDECIDER31")
 EVAL_TASKS = ("task1", "task23")
 BOOTSTRAP_DRAWS = 1200
 SEED = 2026                       # module global used by the ported example builder; set from --seed by each command
@@ -162,6 +162,9 @@ def cmd_setup_envs(args):
                         PATH=str(Path(conda).parent) + os.pathsep + os.environ.get("PATH", ""))
         if model == "DREX":
             env["RUNTIME_REVISION"] = lock["models"]["DREX"]["runtime_revision"]
+        env.pop("BASE_REVISION", None)
+        if lock["models"][model].get("base_revision"):   # MedDecider adapters: their base model is pinned too
+            env["BASE_REVISION"] = lock["models"][model]["base_revision"]
         if os.environ.get("HF_HOME"):
             env["HF_HOME"] = os.environ["HF_HOME"]
         env.pop("HF_SHARED_CACHE", None)

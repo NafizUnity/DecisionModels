@@ -184,7 +184,7 @@ def fmt(x, nd=3):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--model", required=True, choices=["ELEPHANT", "CLEF", "DREX"])
+    ap.add_argument("--model", required=True, choices=list(lh_core.MODELS_INFO))
     ap.add_argument("--smoke", action="store_true", help="read predictions_<MODEL>_smoke.jsonl")
     ap.add_argument("--source"); ap.add_argument("--order", choices=["original", "shuf1"])
     ap.add_argument("--request", help="one request_id")
