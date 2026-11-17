@@ -55,7 +55,8 @@ class Adapter:
         sys.dont_write_bytecode = True               # the checkpoint folder may be a link into a shared cache
         sys.path.insert(0, str(self.weights))
         self.bds = importlib.import_module("biodecision_server")   # top-level imports are stdlib only; vLLM is imported lazily
-        if Path(self.bds.__file__).resolve().parent != self.weights.resolve():
+        # compare folders, not the file: in a Hugging Face cache each snapshot file links to blobs/<hash>
+        if Path(self.bds.__file__).parent.resolve() != self.weights.resolve():
             raise EnvironmentMismatch(f"imported {self.bds.__file__}, not the pinned copy")
         if len(self.bds.LETTERS) != self.max_options:
             raise EnvironmentMismatch(f"biodecision_server.LETTERS has {len(self.bds.LETTERS)} letters, lh_core says {self.max_options}")

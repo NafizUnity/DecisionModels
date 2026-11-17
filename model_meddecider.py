@@ -68,7 +68,8 @@ class Adapter:
         sys.dont_write_bytecode = True               # the adapter folder may be a link into a shared cache
         sys.path.insert(0, str(self.adapter_dir))    # after lh_core was imported
         self.mdi = importlib.import_module("meddecider_infer")
-        if Path(self.mdi.__file__).resolve().parent != self.adapter_dir.resolve():
+        # compare folders, not the file: in a Hugging Face cache each snapshot file links to blobs/<hash>
+        if Path(self.mdi.__file__).parent.resolve() != self.adapter_dir.resolve():
             raise EnvironmentMismatch(f"imported {self.mdi.__file__}, not the pinned copy in {self.adapter_dir}")
         if len(self.mdi.LETTERS) != self.max_options:
             raise EnvironmentMismatch(f"meddecider_infer.LETTERS has {len(self.mdi.LETTERS)} letters, lh_core says {self.max_options}")
