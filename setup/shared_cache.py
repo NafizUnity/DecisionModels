@@ -67,6 +67,21 @@ def check_snapshot(snap, files):
     return problems, optional_diff
 
 
+def model_folder(cache, repo):
+    """The cache folder of REPO. Hub repo ids are case-insensitive, but a cache folder keeps the spelling used at
+    download (e.g. models--google--gemma-4-31B-it for google/gemma-4-31b-it): an exact match first, else the one folder
+    whose name differs only in case. The files are still verified against the pinned revision."""
+    exact = cache / ("models--" + repo.replace("/", "--"))
+    if exact.is_dir() or not cache.is_dir():
+        return exact
+    same = [d for d in cache.glob("models--*") if d.is_dir() and d.name.lower() == exact.name.lower()]
+    if len(same) > 1:
+        sys.exit(f"STOPPED: several cache folders match {repo} up to case: {', '.join(sorted(d.name for d in same))}")
+    if same:
+        print(f"{repo}: using cache folder {same[0].name} (same repo id, different capitalisation)", flush=True)
+    return same[0] if same else exact
+
+
 def cmd_link(args):
     manifest = json.loads(MANIFEST.read_text())
     entry = manifest["models"].get(args.repo)
@@ -76,7 +91,7 @@ def cmd_link(args):
         sys.exit(f"STOPPED: {MANIFEST.name} lists {args.repo}@{entry['revision'][:8]} but the lock pins {args.revision[:8]}; "
                  f"regenerate it with `python setup/shared_cache.py manifest`")
     cache = Path(args.cache).expanduser()
-    model_dir = cache / ("models--" + args.repo.replace("/", "--"))
+    model_dir = model_folder(cache, args.repo)
     if not model_dir.is_dir():
         name = args.repo.split("/")[-1].lower()
         near = sorted(d.name for d in cache.glob("models--*") if name in d.name.lower()) if cache.is_dir() else []
@@ -132,7 +147,7 @@ def cmd_check(args):
     snap = Path(os.path.realpath(dest))
     if dest.is_symlink() and (args.cache or snap.parent.name == "snapshots"):   # a link into a Hugging Face cache
         if args.cache:
-            want = (Path(args.cache).expanduser().resolve() / ("models--" + args.repo.replace("/", "--")) / "snapshots")
+            want = model_folder(Path(args.cache).expanduser().resolve(), args.repo).resolve() / "snapshots"
             if snap.parent != want:
                 sys.exit(f"NOT READY: {dest} links to {snap}, not to a snapshot in {want}")
         problems, _ = check_snapshot(snap, entry["files"])
