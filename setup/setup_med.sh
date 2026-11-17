@@ -70,12 +70,12 @@ case "$MED_MODEL" in
         get_checkpoint lighteternal/biodecision-v2-4b biodecision-v2-4b "" --exclude "assets/*" --exclude "*.png" --exclude "*.mp4"   # about 9 GB
         ;;
     MEDDECIDER27)
-        : "${BASE_REVISION:?BASE_REVISION is required for MedDecider-27B's base model}"
+        : "${BASE_REVISION:?BASE_REVISION is required for the MedDecider-27B base model}"
         get_checkpoint lion-ai/MedDecider-27B meddecider-27b                     # LoRA adapter, 0.2 GB
         get_checkpoint Qwen/Qwen3.8-27B qwen3.8-27b "$BASE_REVISION"             # base model, about 52 GB
         ;;
     MEDDECIDER31)
-        : "${BASE_REVISION:?BASE_REVISION is required for MedDecider-31B's base model}"
+        : "${BASE_REVISION:?BASE_REVISION is required for the MedDecider-31B base model}"
         get_checkpoint lion-ai/MedDecider-31B meddecider-31b                     # LoRA adapter, 0.3 GB
         get_checkpoint google/gemma-4-31b-it gemma-4-31b-it "$BASE_REVISION"     # base model, about 59 GB
         ;;
