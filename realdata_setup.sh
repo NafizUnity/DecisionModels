@@ -219,9 +219,30 @@ if [ "$NEED_MINIFORGE" = 1 ] || [ ${#TODO[@]} -gt 0 ]; then
     say "To install: $([ "$NEED_MINIFORGE" = 1 ] && echo -n "Miniforge; ")models ${TODO[*]:-none}"
     echo "  This downloads public open-source software only (nothing is uploaded):"
     [ "$NEED_MINIFORGE" = 1 ] && echo "    github.com/conda-forge/miniforge      Miniforge installer -> $BASE/miniforge3"
-    echo "    prefix.dev, conda.anaconda.org          Python, build tools, CUDA 12.8 toolkit (Elephant)"
-    echo "    pypi.org, download.pytorch.org          PyTorch, transformers and other pinned packages"
-    echo "    github.com                              OneJev (Elephant), drex-decision-models (Drex), pinned commits"
+    # only what the missing models need (each model's setup/setup_<model>.sh)
+    med_listed=0
+    for m in "${TODO[@]}"; do
+        case "$m" in
+            ELEPHANT) echo "    for ELEPHANT (env realdata-elephant):"
+                      echo "      prefix.dev, conda.anaconda.org      Python 3.11, CUDA 12.8 toolkit (to compile its kernel)"
+                      echo "      download.pytorch.org, pypi.org      PyTorch 2.8 and Elephant's pinned packages"
+                      echo "      github.com                          OneJev runtime (pinned commit, via the checkpoint's setup.sh)" ;;
+            CLEF)     echo "    for CLEF (env realdata-clef):"
+                      echo "      prefix.dev, conda.anaconda.org      Python 3.11"
+                      echo "      pypi.org                            PyTorch 2.11, transformers 5.10.2 and pinned packages" ;;
+            DREX)     echo "    for DREX (env realdata-drex):"
+                      echo "      prefix.dev, conda.anaconda.org      Python 3.12"
+                      echo "      pypi.org                            PyTorch, transformers 5.17.0 and pinned packages"
+                      echo "      github.com                          drex-decision-models runtime (pinned commit)" ;;
+            BIODECISION|MEDDECIDER27|MEDDECIDER31)
+                      [ "$med_listed" = 1 ] && continue; med_listed=1
+                      meds=""; for x in "${TODO[@]}"; do [[ "$x" =~ ^(BIODECISION|MEDDECIDER27|MEDDECIDER31)$ ]] && meds+="$x "; done
+                      echo "    for ${meds% } (one env, realdata-med, shared by the medical models):"
+                      echo "      prefix.dev, conda.anaconda.org      Python 3.12"
+                      echo "      download.pytorch.org, pypi.org      PyTorch 2.8 (CUDA 12.8), transformers 5.22.2, peft 0.21.2,"
+                      echo "                                          flash-linear-attention 0.5.2, causal-conv1d (optional)" ;;
+        esac
+    done
     if [ -n "$HF_CACHE" ]; then echo "    (no model weights: checkpoints are linked from $HF_CACHE after verification)"
     else echo "    huggingface.co                          the pinned checkpoints into $MODELS (about 120 GB general, 128 GB medical)"; fi
 fi
