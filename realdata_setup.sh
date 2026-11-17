@@ -5,7 +5,6 @@
 #   bash realdata_setup.sh --check-only    # check only; never installs or downloads anything
 #   bash realdata_setup.sh --yes           # do not ask (for a non-interactive shell)
 #   bash realdata_setup.sh --conf FILE     # settings file (default: realdata.conf next to this script)
-#   bash realdata_setup.sh --models "BIODECISION MEDDECIDER31"   # only these models (default: RUN_MODELS in the conf)
 #
 # Every item is checked first and skipped when it is already in place:
 #   GPU and driver, conda (Miniforge), and per model: its conda env, pinned core packages, imports, the checkpoint
@@ -14,14 +13,13 @@
 # and run `main.py setup-envs` for the missing models. It ends with the data checks and one line: READY or NOT READY.
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF="$HERE/realdata.conf"; YES=0; CHECK_ONLY=0; MODELS_ARG=""
+CONF="$HERE/realdata.conf"; YES=0; CHECK_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF="${2:?--conf needs a file}"; shift 2 ;;
         --yes) YES=1; shift ;;
         --check-only) CHECK_ONLY=1; shift ;;
-        --models) MODELS_ARG="${2:?--models needs a list, e.g. \"BIODECISION MEDDECIDER31\"}"; shift 2 ;;
-        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -35,7 +33,7 @@ fi
 source "$CONF"
 : "${BASE:?BASE is not set in $CONF}"; MODELS="${MODELS:-$BASE/models}"
 HF_CACHE="${HF_CACHE:-}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"
-RUN_MODELS="${MODELS_ARG:-${RUN_MODELS:-ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31}}"; RUN_MODELS="${RUN_MODELS^^}"
+RUN_MODELS="${RUN_MODELS:-ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31}"; RUN_MODELS="${RUN_MODELS^^}"
 mkdir -p "$MODELS/setup_logs"
 LOG="$MODELS/setup_logs/realdata_setup_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -271,10 +269,9 @@ else
     say "Checking the description index (coverage, duplicates, tokens per model; CPU only)"
     # token counts use each general model's own prompt code; the medical models' prompts are short and checked at load
     desc_models=""; for m in $RUN_MODELS; do [[ " $GENERAL_MODELS " == *" $m "* ]] && desc_models+="$m "; done
-    # exact counts start each selected general model's env on CPU; with medical models only: the characters/4 estimate
-    token_args=(); [ -n "$desc_models" ] && token_args=(--weights-dir "$MODELS" --models $desc_models)
+    [ -n "$desc_models" ] || desc_models="$GENERAL_MODELS"
     # shellcheck disable=SC2086
-    if "$PYB" "$HERE/check_descriptions.py" --data "$DATA" --index "$INDEX" "${token_args[@]}" \
+    if "$PYB" "$HERE/check_descriptions.py" --data "$DATA" --index "$INDEX" --weights-dir "$MODELS" --models $desc_models \
          --stride 20 --out "$MODELS/setup_logs/desc_check.json"; then ok "INDEX $INDEX"
     else not_ready "check_descriptions.py reported a FAIL (see above; counts in $MODELS/setup_logs/desc_check.json)"; fi
 fi
