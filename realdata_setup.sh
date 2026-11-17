@@ -249,12 +249,14 @@ elif [ "$NEED_MINIFORGE" = 1 ] || [ ${#TODO[@]} -gt 0 ]; then
 
     say "Installing models: ${TODO[*]}"
     cache_arg=(); [ -n "$HF_CACHE" ] && cache_arg=(--hf-cache "$HF_CACHE")
-    models_lc=(); for m in "${TODO[@]}"; do models_lc+=("${m,,}"); done
-    if ! "$PYB" -u "$HERE/main.py" --project-dir "$MODELS" setup-envs --models "${models_lc[@]}" "${cache_arg[@]}"; then
-        not_ready "main.py setup-envs stopped (its log is in $MODELS/setup_logs)"; finish
-    fi
-    say "Rechecking the installed models"
-    for m in "${TODO[@]}"; do model_ready "$m" || not_ready "$m is still not ready after setup (see above)"; done
+    # one model at a time, so a model that cannot be set up (e.g. a base model missing from HF_CACHE) does not stop the rest
+    for m in "${TODO[@]}"; do
+        say "Setting up $m"
+        if ! "$PYB" -u "$HERE/main.py" --project-dir "$MODELS" setup-envs --models "${m,,}" "${cache_arg[@]}"; then
+            not_ready "$m: setup stopped (see above; its log is in $MODELS/setup_logs); the other models continue"; continue
+        fi
+        model_ready "$m" || not_ready "$m is still not ready after setup (see above)"
+    done
 fi
 
 say "Data"
