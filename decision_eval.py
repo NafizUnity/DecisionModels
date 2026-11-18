@@ -63,7 +63,7 @@ def merged_context(entity, query):
     return entity if entity.lower() == query.lower() else f"{entity} (expanded: {query})"
 
 
-def validate(data):
+def validate(data, top=None):
     """Every problem in the file (entity ids and code values only; no entity or query text). Empty list = usable."""
     if not isinstance(data, list) or not data:
         return ["the file must hold a non-empty JSON list of entities"]
@@ -102,8 +102,9 @@ def validate(data):
                 problems.append(f"{where}: {source} lists {len(ranking) - len(set(ranking))} code(s) more than once")
             elif len(ranking) < 2:
                 problems.append(f"{where}: {source} has {len(ranking)} code; a choice needs at least 2")
-            elif len(ranking) > MAX_OPTIONS:
-                problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS}")
+            elif len(ranking[:top]) > MAX_OPTIONS:   # --top K: only the first K codes become options
+                problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS} "
+                                f"(use --top {MAX_OPTIONS} or less)")
     return problems
 
 
@@ -135,7 +136,9 @@ def cmd_build(args):
     out = Path(args.run_dir).resolve()
     if (out / "requests.jsonl").exists() or list(out.glob("predictions_*.jsonl")):
         sys.exit(f"{out} already has requests or predictions; use a new --run-dir")
-    problems = validate(data)
+    if args.top is not None and args.top > MAX_OPTIONS:
+        sys.exit(f"STOPPED: --top {args.top} is above {MAX_OPTIONS}, the most options the models take; nothing was written")
+    problems = validate(data, args.top)
     if problems:
         for line in problems[:30]:
             print("  " + line)

@@ -399,11 +399,15 @@ def main():
     import decision_eval as de
     main_idx, hier = load_index(args.index)
     data = json.load(open(args.data, encoding="utf8"))
-    problems = de.validate(data)
+    problems = de.validate(data, de.MAX_OPTIONS)   # lists longer than 255 are fine for a --top 255 (or smaller) build
     report("FAIL" if problems else "PASS", "B data file valid", f"{len(data)} entities, {len(problems)} problem(s)"
            + (f"; first: {problems[0]}" if problems else ""), entities=len(data), problems=len(problems))
     if problems:
         sys.exit(1)
+    longest = max(len(r) for d in data for r in d["rankings"].values())
+    if longest > de.MAX_OPTIONS:
+        report("WARN", "B list length", f"lists hold up to {longest} codes: a whole-list run stops; build with "
+               f"--top {de.MAX_OPTIONS} or less", longest=longest)
     desc = check_data(data, main_idx, hier)
     items = build_items(data)
     ratios = check_tokens(items, desc, main_idx, args)
