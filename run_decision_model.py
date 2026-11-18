@@ -121,9 +121,25 @@ def cmd_build(args):
 
 
 # --- run --------------------------------------------------------------------------------------------------------------
-def load_requests(run_dir, stride):
+def parse_sources(text):
+    """--sources 'a b' or 'a,b' -> a tuple of source names; empty -> None (all sources)."""
+    names = tuple(dict.fromkeys((text or "").replace(",", " ").split()))
+    return names or None
+
+
+def load_requests(run_dir, stride, sources=None):
     path = Path(run_dir) / "requests.jsonl"
-    rows = [json.loads(l) for l in open(path, encoding="utf8")]
+    return select_requests([json.loads(l) for l in open(path, encoding="utf8")], stride, sources)
+
+
+def select_requests(rows, stride=1, sources=None):
+    """The requests of the given sources (None = all), then about 1 in `stride` of them."""
+    if sources:
+        unknown = sorted(set(sources) - {r.get("source") for r in rows})
+        if unknown:
+            sys.exit(f"STOPPED: source(s) {unknown} are not in requests.jsonl; it holds "
+                     f"{sorted({r.get('source') for r in rows})}")
+        rows = [r for r in rows if r.get("source") in sources]
     if stride == 1:
         return rows
     # about 1 in `stride`, chosen by a hash of the request id: every order, source and k gets its share (taking every
@@ -148,7 +164,7 @@ EXPORT_COLUMNS = ("request_id", "entity_id", "source", "n_options", "order", "mo
                   "probability", "prob_rank", "retriever_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
 
 
-def export_options(run_dir, model, smoke):
+def export_options(run_dir, model, smoke, sources=None):
     """Write two timestamped files to run_dir/option_probs/ (name <MODEL>[_smoke]_<run>_<UTC time>), plus a .json sidecar:
       .jsonl  one self-contained record per selected request: the model input (state, question, options: the codes in the
               order shown; older top-k runs: letter -> code), the ground truth, the prediction and every option's
@@ -165,11 +181,12 @@ def export_options(run_dir, model, smoke):
     requests_sha = hashlib.sha256((run_dir / "requests.jsonl").read_bytes()).hexdigest()
     if meta.get("requests_sha256") != requests_sha:
         sys.exit(f"STOPPED: {pred_path.name} was made for a different requests.jsonl; not exporting")
-    requests = load_requests(run_dir, meta.get("stride", 1))
+    all_rows = load_requests(run_dir, 1)
+    requests = select_requests(all_rows, meta.get("stride", 1))
     # each code's rank in the source's own ranking = its position in the request's 'original' order (all requests,
     # not only the selected ones: a smoke sample may hold the shuf1 request without its original twin)
     retriever = {}
-    for r in load_requests(run_dir, 1):
+    for r in all_rows:
         if r["order"] == "original":
             retriever[r["request_id"].rsplit("|", 1)[0]] = {c: i for i, c in enumerate(r["codes"], 1)}
     latest, last_error = {}, {}
@@ -178,6 +195,9 @@ def export_options(run_dir, model, smoke):
             latest[row["request_id"]] = row          # a later ok row for the same request wins
         else:
             last_error[row["request_id"]] = row
+    if sources:   # the chosen sources, plus every request that already has a row (from an earlier run on other sources)
+        chosen = {r["request_id"] for r in select_requests(all_rows, 1, sources)}
+        requests = [r for r in requests if r["request_id"] in chosen or r["request_id"] in latest or r["request_id"] in last_error]
     revision = json.loads((HERE / "revisions.lock.json").read_text())["models"].get(model, {}).get("revision")
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out = run_dir / "option_probs" / f"{model}{'_smoke' if smoke else ''}_{run_dir.name}_{stamp}.csv"
@@ -252,7 +272,7 @@ def export_options(run_dir, model, smoke):
 
 
 def cmd_export(args):
-    export_options(args.run_dir, args.model.upper(), args.smoke)
+    export_options(args.run_dir, args.model.upper(), args.smoke, args.sources)
 
 
 def cmd_worker(args):
@@ -282,7 +302,7 @@ def cmd_worker(args):
         sys.exit(f"{out_path.name} exists without {meta_path.name}, so its requests cannot be checked; move it away or use a new --run-dir.")
     else:
         lh_core.write_json_atomic(meta_path, {"requests_sha256": requests_sha, "model": model, "stride": args.stride})
-    requests = load_requests(run_dir, args.stride)
+    requests = load_requests(run_dir, args.stride, args.sources)
     old = [r["request_id"] for r in requests if lh_core.QUESTION_ID not in r["record"]["questions"]]
     if old:   # only the models read the question; report and export work on older run folders too
         sys.exit(f"STOPPED: {len(old)} request(s) in {run_dir / 'requests.jsonl'} were built by an older version (question id "
@@ -292,7 +312,8 @@ def cmd_worker(args):
     adapter.load()
     done = {r["request_id"] for r in lh_core.read_jsonl_recovering(out_path) if r.get("status") == "ok"} if out_path.exists() else set()
     todo = [r for r in requests if r["request_id"] not in done]
-    lh_core.log(f"{model}: {len(requests)} requests, {len(done)} already done, {len(todo)} to run -> {out_path.name}")
+    lh_core.log(f"{model}: {len(requests)} requests" + (f" (sources: {' '.join(args.sources)})" if args.sources else "")
+                + f", {len(done)} already done, {len(todo)} to run -> {out_path.name}")
     consecutive, t_start = 0, time.perf_counter()
     with lh_core.JsonlAppender(out_path) as sink:
         for i, r in enumerate(todo, 1):
@@ -331,7 +352,7 @@ def cmd_worker(args):
     else:
         lh_core.log(f"{model}: finished, {len(wanted)}/{len(wanted)} ok")
     if ok & wanted:
-        export_options(run_dir, model, args.stride > 1)
+        export_options(run_dir, model, args.stride > 1, args.sources)
 
 
 def cmd_run(args):
@@ -347,7 +368,7 @@ def cmd_run(args):
     if not (Path(args.run_dir) / "requests.jsonl").exists():
         sys.exit(f"{args.run_dir} has no requests.jsonl; run decision_eval.py build first.")
     limit = lh_core.MODELS_INFO[model].get("max_options", 255)
-    largest = max((r.get("n_options") or len(r["codes"]) for r in load_requests(args.run_dir, args.stride)), default=0)
+    largest = max((r.get("n_options") or len(r["codes"]) for r in load_requests(args.run_dir, args.stride, args.sources)), default=0)
     if largest > limit:
         sys.exit(f"{model} scores at most {limit} options per request (its own option letters), but {args.run_dir} has requests "
                  f"with {largest}. Build a run folder with --top {limit} or less for it.")
@@ -358,7 +379,8 @@ def cmd_run(args):
                            PYTHONUNBUFFERED="1", HF_HUB_OFFLINE="1")
     lh_core.log(f"{model}: {python} on physical GPU {args.gpu} ({free:.1f} GB free)")
     rc = subprocess.run([python, str(HERE / "run_decision_model.py"), "worker", "--model", model, "--run-dir", str(Path(args.run_dir).resolve()),
-                         "--weights-dir", args.weights_dir, "--stride", str(args.stride)], cwd=str(HERE), env=env).returncode
+                         "--weights-dir", args.weights_dir, "--stride", str(args.stride)]
+                        + (["--sources", " ".join(args.sources)] if args.sources else []), cwd=str(HERE), env=env).returncode
     sys.exit(rc)
 
 
@@ -535,6 +557,9 @@ def main():
         if name == "export":
             s.add_argument("model", choices=[m for m in lh_core.MODELS_INFO] + [m.lower() for m in lh_core.MODELS_INFO])
             s.add_argument("--smoke", action="store_true", help="export the smoke-test predictions instead of the full run")
+        if name in ("run", "worker", "export"):
+            s.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
+                           help="only the requests of these retrieval sources (space- or comma-separated; default: all)")
     args = p.parse_args()
     {"build": cmd_build, "run": cmd_run, "worker": cmd_worker, "report": cmd_report, "export": cmd_export}[args.cmd](args)
 

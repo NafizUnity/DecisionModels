@@ -29,7 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
-from run_decision_model import cell_metrics, load_requests, n_tied_top, order_for, rank_options  # noqa: E402
+from run_decision_model import cell_metrics, load_requests, n_tied_top, order_for, parse_sources, rank_options, select_requests  # noqa: E402
 
 LADDER = (1, 3, 5, 10, 20, 50, 100, 200)   # hit@k cutoffs, taken from the ranking over ALL options of a request
 MAX_OPTIONS = 255            # Elephant (schema MAX_CHOICE_OPTIONS) and Drex (255 answer labels); Clef has no fixed limit
@@ -246,6 +246,12 @@ def cmd_report(args):
     requests_sha = hashlib.sha256((out / "requests.jsonl").read_bytes()).hexdigest()
     preds, selected = {}, {}
     suffix = "_smoke" if args.smoke else ""
+    chosen = args.sources                                    # None = all sources
+    used = [s for s in SOURCES if not chosen or s in chosen]
+    if chosen:
+        bad = sorted(set(chosen) - set(SOURCES))
+        if bad:
+            sys.exit(f"STOPPED: unknown source(s) {bad}; choose from {' '.join(SOURCES)}")
     for model in NAMES:
         path = out / f"predictions_{model}{suffix}.jsonl"
         if path.exists():
@@ -257,7 +263,7 @@ def cmd_report(args):
                 continue
             preds[model] = {p["request_id"]: p for p in lh_core.read_jsonl_readonly(path)[0] if p.get("status") == "ok"}
             # a smoke run covers only the requests its --stride selected; score each model against its own selection
-            selected[model] = {r["request_id"] for r in load_requests(out, json.loads(meta.read_text()).get("stride", 1))}
+            selected[model] = {r["request_id"] for r in select_requests(list(reqs.values()), json.loads(meta.read_text()).get("stride", 1), chosen)}
     if not preds:
         sys.exit(f"no {'smoke-test ' if args.smoke else ''}predictions found in {out}"
                  + ("" if args.smoke else " (for the smoke test, add --smoke)"))
@@ -265,7 +271,7 @@ def cmd_report(args):
     KS = cutoffs(max(tops) if None not in tops else None, max(r["n_options"] for r in reqs.values()))
     hit_cols = [f"model_hit@{k}" for k in KS] + ["model_mrr"] + [f"retriever_hit@{k}" for k in KS] + ["retriever_mrr"]
     rows = []
-    for source in SOURCES:
+    for source in used:
         for order in ORDERS:
             for model, done in preds.items():
                 mine = [i for i, r in reqs.items() if r["source"] == source and r["order"] == order and i in selected[model]]
@@ -299,13 +305,17 @@ def cmd_report(args):
                        "options_median": statistics.median(r["n_options"] for r in mine) if mine else 0,
                        "in_list": len(ents_in), "not_in_list": len(ents) - len(ents_in),
                        "results": {m: (sum(i in done for i in selected[m] if reqs[i]["source"] == source),
-                                       sum(reqs[i]["source"] == source for i in selected[m])) for m, done in preds.items()}})
+                                       sum(reqs[i]["source"] == source for i in selected[m])) if source in used else None
+                                   for m, done in preds.items()}})
+    cell = lambda x: "-" if x is None else f"{x[0]}/{x[1]}"   # noqa: E731  '-' = source left out by --sources
+    if chosen:
+        print(f"Sources in this report (--sources): {' '.join(used)}; the counts table lists all of them, '-' = left out")
     print("Requests per retrieval source (one request = one entity x one option order):")
     print(f"  {'source':<16} {'entities':>8} {'requests':>8} {'options':>7} {'ref in list':>11} {'not in list':>11}  "
           + "  ".join(f"{NAMES[m]}" for m in preds))
     for c in counts:
         print(f"  {c['source']:<16} {c['entities']:>8} {c['requests']:>8} {c['options_median']:>7g} {c['in_list']:>11} "
-              f"{c['not_in_list']:>11}  " + "  ".join(f"{c['results'][m][0]}/{c['results'][m][1]}" for m in preds))
+              f"{c['not_in_list']:>11}  " + "  ".join(cell(c['results'][m]) for m in preds))
     print(f"  {'total':<16} {len({r['entity_id'] for r in reqs.values()}):>8} {len(reqs):>8}")
     print(head)
     for name, order, h, n_exp in summary:
@@ -327,6 +337,8 @@ def cmd_report(args):
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
           "is the same in both orders.", "",
           *([clef_line, ""] if "CLEF" in preds else []),
+          *([f"**Sources: only {', '.join(used)}** (chosen with --sources). The summary pools these sources only; the "
+             "counts table lists every source, with '-' for those left out.", ""] if chosen else []),
           "## Requests per retrieval source", "",
           "One request = one entity x one option order. 'Ref in list': entities whose reference code is among the options "
           "(the others are misses for every model). Model columns: requests with a result / requests selected.", "",
@@ -335,9 +347,9 @@ def cmd_report(args):
           "|---|---|---|---|---|---|---|" + "---|" * len(preds),
           *[f"| {c['source']} | {c['entities']} | {c['requests']} | " + " / ".join(f"{o} {c['per_order'][o]}" for o in ORDERS)
             + f" | {c['options_median']:g} | {c['in_list']} | {c['not_in_list']} | "
-            + " | ".join(f"{c['results'][m][0]}/{c['results'][m][1]}" for m in preds) + " |" for c in counts],
+            + " | ".join(cell(c['results'][m]) for m in preds) + " |" for c in counts],
           f"| **total** | {len({r['entity_id'] for r in reqs.values()})} | {len(reqs)} | | | | | " + " | ".join("" for _ in preds) + " |", "",
-          "## Summary (all sources pooled)", "",
+          "## Summary (" + ("all sources pooled" if not chosen else "the chosen sources pooled") + ")", "",
           "| Model | Order | n ok | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | " + " | ".join(f"retriever @{k}" for k in KS) + " | retriever MRR | Tied top |"]
     md.append(separator(md[-1]))
     md += [f"| {name} | {order} | {h['n']}/{n_exp} | " + " | ".join(f"{h[f'model_hit@{k}']:.3f}" for k in KS) + f" | {h['model_mrr']:.3f} | "
@@ -414,6 +426,8 @@ if __name__ == "__main__":
                    "(default: the whole list)")
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
+    r.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
+                   help="report only these retrieval sources (space- or comma-separated; default: all)")
     c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")
     c.add_argument("--run-dir", required=True); c.add_argument("--smoke", action="store_true")
     args = p.parse_args()

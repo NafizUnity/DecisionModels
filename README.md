@@ -53,6 +53,10 @@ installs anything. It ends with `READY` or `NOT READY: <reasons>`.
 `--models "DREX CLEF"`, `--gpu N`, `--name FOLDER`. It names the folder under `RESULTS_DIR` (`real_top20_desc` etc.), builds or
 reuses the requests (only if they come from the same data, index and K), smoke-tests each model, runs the full set in
 the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunning the same command resumes.
+`--sources "rrf_csv+fsn rrf_csv+fsn+syn"` runs and reports only those retrieval sources (default: all 7). The build
+still holds every source, so the same folder is used: a later run without `--sources` (or with other sources) adds the
+rest and skips the requests already done. The report pools only the chosen sources and says which ones they are; the
+per-source counts table lists all 7, with `-` for those left out. Run `--report-only` without `--sources` for every source.
 `--report-only` rebuilds the tables from an existing folder. Quick check that everything runs: `bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check` (a few requests per model, then stops). The sections below are the manual steps the scripts run.
 
 ## Needs
