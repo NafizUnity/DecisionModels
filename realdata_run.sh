@@ -9,7 +9,8 @@
 #   Models that cannot score the lists are skipped: MedDecider-27B/31B take at most 10 options, BioDecision 24.
 #   --sources: the build still holds all 7 sources; only the chosen ones are run and reported. Rerun later without it
 #   (same folder) to fill in the rest; finished requests are kept.
-#   options: --models "DREX CLEF"  --sources "A B"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
+#   --ks "1,3,5,10,20,30,40": the report's hit@k cutoffs (default: 1,3,5,10,20,50,... up to K); --report-only reapplies them.
+#   options: --models "DREX CLEF"  --sources "A B"  --ks "1,3,5"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
 #            --foreground  --report-only  --smoke-only (stop after the smoke test)  --smoke-n N (smoke sample of at least N)
 #
 # Paths (data, index, models, RESULTS_DIR) come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
@@ -20,13 +21,14 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGS=("$@")
 CONF="$HERE/realdata.conf"; DESC=0; TOP=""; NAME=""; GPU_ARG=""; MODELS_ARG=""; SMOKE=1; FOREGROUND=0; REPORT_ONLY=0
-SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""
+SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""; KS_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --desc) DESC=1; shift ;;
         --top) TOP="${2:?--top needs K}"; shift 2 ;;
         --models) MODELS_ARG="${2:?--models needs a list}"; shift 2 ;;
         --sources) SOURCES_ARG="${2:?--sources needs a list}"; shift 2 ;;
+        --ks) KS_ARG="${2:?--ks needs a list such as 1,3,5,10}"; shift 2 ;;
         --gpu) GPU_ARG="${2:?--gpu needs an index}"; shift 2 ;;
         --name) NAME="${2:?--name needs a folder}"; shift 2 ;;
         --conf) CONF="${2:?--conf needs a file}"; shift 2 ;;
@@ -35,7 +37,7 @@ while [ $# -gt 0 ]; do
         --report-only) REPORT_ONLY=1; shift ;;
         --smoke-only) SMOKE_ONLY=1; FOREGROUND=1; shift ;;
         --smoke-n) SMOKE_N="${2:?--smoke-n needs a number}"; shift 2 ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -94,6 +96,21 @@ print(" ".join(names))
 PY
     )" || stop "--sources: see the message above"
     SRC_OPT=(--sources "$SOURCES_ARG")
+fi
+# ---- --ks: the report's hit@k cutoffs (only the report reads them; changing them needs no model run) ------------------
+KS_OPT=()
+if [ -n "$KS_ARG" ]; then
+    KS_ARG="$("$PY" - "$KS_ARG" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from decision_eval import parse_ks
+try:
+    print(",".join(map(str, parse_ks(sys.argv[1]))))
+except Exception as exc:
+    sys.exit(str(exc))
+PY
+    )" || stop "--ks: see the message above"
+    KS_OPT=(--ks "$KS_ARG")
 fi
 
 # ======================================================================================================================
@@ -237,7 +254,7 @@ PY
         done
         if [ "$smoked" = 1 ]; then
             say "Smoke report"
-            "$PY" decision_eval.py report --run-dir "$RUN" --smoke ${SRC_OPT[@]+"${SRC_OPT[@]}"} || stop "smoke report failed (see above)"
+            "$PY" decision_eval.py report --run-dir "$RUN" --smoke ${SRC_OPT[@]+"${SRC_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "smoke report failed (see above)"
         fi
         if [ "$SMOKE_ONLY" = 1 ]; then say "DONE (smoke test only): $RUN"; exit 0; fi
     fi
@@ -252,7 +269,7 @@ PY
 fi
 
 say "Report${SOURCES_ARG:+ (sources: $SOURCES_ARG)}"
-"$PY" decision_eval.py report --run-dir "$RUN" ${SRC_OPT[@]+"${SRC_OPT[@]}"} || stop "report failed (see above)"
+"$PY" decision_eval.py report --run-dir "$RUN" ${SRC_OPT[@]+"${SRC_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "report failed (see above)"
 for m in $RUN_MODELS; do
     if [ -f "$RUN/predictions_${m}.jsonl" ]; then
         "$PY" show_predictions.py --run-dir "$RUN" --model "$m" --limit 0 > "$RUN/failure_summary_${m}.txt" 2>&1 \

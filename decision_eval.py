@@ -47,6 +47,17 @@ def cutoffs(top, longest):
     return ks + [top] if top and top not in ks else ks
 
 
+def parse_ks(text):
+    """--ks '1,3,5,10' or '1 3 5 10' -> sorted unique whole numbers of 1 or more."""
+    try:
+        ks = sorted({int(x) for x in text.replace(",", " ").replace("[", " ").replace("]", " ").split()})
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--ks takes whole numbers, e.g. '1,3,5,10' (got {text!r})")
+    if not ks or ks[0] < 1:
+        raise argparse.ArgumentTypeError("--ks needs at least one number, all 1 or more")
+    return ks
+
+
 def merged_context(entity, query):
     entity, query = entity.strip(), query.strip()
     return entity if entity.lower() == query.lower() else f"{entity} (expanded: {query})"
@@ -269,6 +280,14 @@ def cmd_report(args):
                  + ("" if args.smoke else " (for the smoke test, add --smoke)"))
     tops = {r.get("top") for r in reqs.values()}
     KS = cutoffs(max(tops) if None not in tops else None, max(r["n_options"] for r in reqs.values()))
+    if args.ks:   # --ks: the user's own cutoffs, up to the longest list (a larger k would repeat the last column)
+        longest = max(r["n_options"] for r in reqs.values())
+        dropped = [k for k in args.ks if k > longest]
+        if dropped:
+            print(f"WARNING: --ks {dropped} dropped: the lists hold at most {longest} options, so hit@k there equals hit@{longest}")
+        KS = [k for k in args.ks if k <= longest]
+        if not KS:
+            sys.exit(f"STOPPED: every --ks value is above {longest}, the longest list")
     hit_cols = [f"model_hit@{k}" for k in KS] + ["model_mrr"] + [f"retriever_hit@{k}" for k in KS] + ["retriever_mrr"]
     rows = []
     for source in used:
@@ -428,6 +447,8 @@ if __name__ == "__main__":
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     r.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
                    help="report only these retrieval sources (space- or comma-separated; default: all)")
+    r.add_argument("--ks", type=parse_ks, default=None, metavar="'1,3,5,10'",
+                   help="hit@k cutoffs to report (comma- or space-separated; default: 1,3,5,10,20,50,... up to the list length)")
     c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")
     c.add_argument("--run-dir", required=True); c.add_argument("--smoke", action="store_true")
     args = p.parse_args()

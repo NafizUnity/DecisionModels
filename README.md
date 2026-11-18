@@ -57,6 +57,9 @@ the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunni
 still holds every source, so the same folder is used: a later run without `--sources` (or with other sources) adds the
 rest and skips the requests already done. The report pools only the chosen sources and says which ones they are; the
 per-source counts table lists all 7, with `-` for those left out. Run `--report-only` without `--sources` for every source.
+`--ks "1,3,5,10,20,30,40"` sets the report's hit@k cutoffs (default: 1, 3, 5, 10, 20, 50, ... up to K). Only the report
+uses them, so `--report-only --foreground --ks "..."` redoes the tables without running a model. A k above the longest list is dropped
+with a warning (it would repeat the last column).
 `--report-only` rebuilds the tables from an existing folder. Quick check that everything runs: `bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check` (a few requests per model, then stops). The sections below are the manual steps the scripts run.
 
 ## Needs
