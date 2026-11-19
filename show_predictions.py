@@ -33,7 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
-from run_decision_model import rank_options  # noqa: E402
+from run_decision_model import model_view, rank_options, retriever_rankings  # noqa: E402
 
 RELATIONS = ("correct", "parent/child", "sibling", "same chapter", "other chapter", "not in list")
 
@@ -62,18 +62,20 @@ def load(run_dir, model, smoke):
         recorded = json.loads(meta.read_text()).get("requests_sha256")
         if recorded != hashlib.sha256(req_path.read_bytes()).hexdigest():
             sys.exit(f"STOPPED: {pred_path.name} was not made from this requests.jsonl")
+    rows = [json.loads(line) for line in open(req_path, encoding="utf8")]
+    if any("n_options" not in r for r in rows):
+        sys.exit(f"STOPPED: {out} was built by the earlier top-k version; this script reads whole-list / --top runs")
+    full = retriever_rankings(rows)   # the retriever's order = the codes of the 'original' twin (build writes both orders)
+    limit = lh_core.MODELS_INFO[model]["max_options"]
+    cut = max(r["n_options"] for r in rows) > limit   # the model read only the first `limit` codes of longer lists
     reqs = {}
-    for line in open(req_path, encoding="utf8"):
-        r = json.loads(line)
-        if "n_options" not in r:
-            sys.exit(f"STOPPED: {out} was built by the earlier top-k version; this script reads whole-list / --top runs")
-        reqs[r["request_id"]] = {k: r[k] for k in ("source", "order", "gt_code", "answerable", "retriever_rank", "n_options")}
-        reqs[r["request_id"]]["keys"] = list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])   # shown order
-    for rid, r in reqs.items():   # the retriever's order = the codes of the 'original' twin (build writes both orders)
-        twin = reqs.get(rid.rsplit("|", 1)[0] + "|original")
-        if twin is None:
-            sys.exit(f"STOPPED: {rid} has no '|original' request; this script needs both orders in requests.jsonl")
-        r["ranking"] = twin["keys"]
+    for r in rows:
+        if (r["entity_id"], r["source"]) not in full:
+            sys.exit(f"STOPPED: {r['request_id']} has no '|original' request; this script needs both orders in requests.jsonl")
+        v = model_view(r, limit, full) if cut else r
+        reqs[r["request_id"]] = {k: v[k] for k in ("source", "order", "gt_code", "answerable", "retriever_rank", "n_options")}
+        reqs[r["request_id"]]["keys"] = list(v["record"]["questions"][lh_core.QUESTION_ID]["criteria"])   # shown order
+        reqs[r["request_id"]]["ranking"] = full[(r["entity_id"], r["source"])]
     preds = {p["request_id"]: p for p in lh_core.read_jsonl_readonly(pred_path)[0] if p.get("status") == "ok"}
     return reqs, preds
 

@@ -7,7 +7,7 @@ source's ranking** (or its first K with `--top K`); top-k is then read from the 
 (hit@1, 3, 5, 10, ... up to K, and MRR) and compared with the retriever's ranking of the same list. 7 ranking sources, in
 original and shuffled option order.
 
-How many options a model can score is fixed by its own code:
+How many options a model can score is fixed by its own code (`max_options` in `lh_core.MODELS_INFO`):
 
 | Model | Most options per request | Why |
 |---|---|---|
@@ -15,8 +15,11 @@ How many options a model can score is fixed by its own code:
 | BioDecision v2 4B | 24 | its letters A-X (`biodecision_server.LETTERS`) |
 | MedDecider-27B, MedDecider-31B | 10 | its letters A-J (`meddecider_infer.LETTERS`; model cards: "2 to 10 answer options") |
 
-`realdata_run.sh` skips a model that cannot score the run's lists: `--top 10` runs all six, `--top 11` to `24` drops
-MedDecider, larger K and whole lists run the general models only. The medical models share one env, `realdata-med`
+Every model runs on every folder. The build reads at most 255 codes per list; a model with a lower limit gets the
+retriever's first N codes of each longer list (N = its limit), in the same order and with the same shuffle a `--top N`
+build would give, so its answers match a `--top N` run. In the report its hit@k above N is `N/A`, a reference code
+ranked below N is a miss for it, and its MRR and Acc are over those N codes; the report says which models were cut.
+The medical models share one env, `realdata-med`
 (torch 2.8, transformers 5.22.2, peft 0.21.2, the versions of GeminiOps/MedDecision); the MedDecider adapters also need
 their base models (`Qwen/Qwen3.8-27B`, `google/gemma-4-31b-it`) in `HF_CACHE`.
 

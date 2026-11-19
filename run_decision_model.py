@@ -49,6 +49,31 @@ def order_for(codes, order, entity_id, k):
     return shuffled
 
 
+def retriever_rankings(rows):
+    """(entity_id, source) -> the source's ranking = the codes of the 'original' request (the build writes every order)."""
+    return {(r["entity_id"], r["source"]): r["codes"] for r in rows if r["order"] == "original"}
+
+
+def model_view(r, limit, rankings):
+    """The request as a model that reads at most `limit` options sees it. A longer list is cut to the retriever's first
+    `limit` codes, put in the request's order with the same seed a `--top limit` build uses, so the model gets exactly
+    the question a --top build would give it. The reference code ranked below `limit` is then not an option (a miss).
+    Requests within the limit are returned unchanged. retriever_rank stays the rank in the source's full list."""
+    if r["n_options"] <= limit:
+        return r
+    question = r["record"]["questions"][lh_core.QUESTION_ID]
+    criteria = question["criteria"]
+    if list(criteria) != r["codes"]:
+        sys.exit(f"STOPPED: {r['request_id']}: option keys are not the codes (an older build); cannot cut it to {limit} options")
+    kept = rankings[(r["entity_id"], r["source"])][:limit]
+    codes = order_for(kept, r["order"], f"{r['entity_id']}|{r['source']}", f"top{limit}")
+    gt = r["gt_code"]
+    ans = gt in kept
+    return {**r, "codes": codes, "n_options": len(codes), "options_in_list": r["n_options"], "answerable": ans,
+            "gt_letter": gt if ans else None, "gt_position": codes.index(gt) + 1 if ans else None,
+            "record": {**r["record"], "questions": {lh_core.QUESTION_ID: {**question, "criteria": {c: criteria[c] for c in codes}}}}}
+
+
 def build_requests(src, with_notes=True):
     data = json.load(open(src, encoding="utf8"))
     desc = data["code_descriptions"]
@@ -195,6 +220,8 @@ def export_options(run_dir, model, smoke, sources=None):
             latest[row["request_id"]] = row          # a later ok row for the same request wins
         else:
             last_error[row["request_id"]] = row
+    limit = lh_core.MODELS_INFO.get(model, {}).get("max_options", 255)
+    rankings = retriever_rankings(all_rows) if any((r.get("n_options") or 0) > limit for r in requests) else {}
     if sources:   # the chosen sources, plus every request that already has a row (from an earlier run on other sources)
         chosen = {r["request_id"] for r in select_requests(all_rows, 1, sources)}
         requests = [r for r in requests if r["request_id"] in chosen or r["request_id"] in latest or r["request_id"] in last_error]
@@ -209,6 +236,12 @@ def export_options(run_dir, model, smoke, sources=None):
         w = csv.writer(f)
         w.writerow(EXPORT_COLUMNS)
         for r in requests:
+            full_n = r.get("n_options", r.get("k"))
+            if rankings:   # the question as this model read it (cut to its option limit), checked against the worker's record
+                r = model_view(r, limit, rankings)
+                shown = (latest.get(r["request_id"]) or {}).get("shown_codes")
+                if shown is not None and shown != r["codes"]:
+                    sys.exit(f"STOPPED: {r['request_id']}: the options {model} was given differ from the ones rebuilt now")
             question = next(iter(r["record"]["questions"].values()))   # the one question (older runs named it "longhealth")
             letters = list(question["criteria"])
             code_of = dict(zip(letters, r["codes"]))
@@ -219,6 +252,7 @@ def export_options(run_dir, model, smoke, sources=None):
             # whole-list runs key each option by its code with no description; older runs used letters -> codes
             shown = list(options) if all(v is None for v in options.values()) else dict(options)
             record = {"request_id": r["request_id"], "entity_id": entity_id, "source": r.get("source", ""), "n_options": n_options,
+                      "options_in_list": full_n,
                       "order": r["order"], "model": model, "model_revision": revision,
                       "input": {"state": r["record"]["state"], "instructions": question["instructions"], "options": shown},
                       "ground_truth": {"code": r["gt_code"], "key": r["gt_letter"], "position": r.get("gt_position"),
@@ -307,6 +341,12 @@ def cmd_worker(args):
     if old:   # only the models read the question; report and export work on older run folders too
         sys.exit(f"STOPPED: {len(old)} request(s) in {run_dir / 'requests.jsonl'} were built by an older version (question id "
                  f"is not '{lh_core.QUESTION_ID}'); build again into a new --run-dir")
+    limit = info.get("max_options", 255)
+    longest = max((r.get("n_options") or len(r["codes"]) for r in requests), default=0)
+    rankings = retriever_rankings(load_requests(run_dir, 1)) if longest > limit else {}
+    if rankings:
+        lh_core.log(f"{model}: reads at most {limit} options; lists here hold up to {longest}, so it gets the retriever's "
+                    f"first {limit} codes of each longer list (the same question as a --top {limit} build)")
     adapter = module.Adapter(spec)
     adapter.check_environment()
     adapter.load()
@@ -317,14 +357,17 @@ def cmd_worker(args):
     consecutive, t_start = 0, time.perf_counter()
     with lh_core.JsonlAppender(out_path) as sink:
         for i, r in enumerate(todo, 1):
-            choices = list(r["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
+            v = model_view(r, limit, rankings) if rankings else r   # the question this model can read
+            choices = list(v["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
             t0 = time.perf_counter()
             row = {"request_id": r["request_id"], "model": model}
+            if v is not r:
+                row["shown_codes"] = v["codes"]   # cut to the model's limit; the report and export rebuild and check it
             failure = None
             try:
-                probs = lh_core.normalize_probabilities(adapter.predict(r["record"]), choices)
+                probs = lh_core.normalize_probabilities(adapter.predict(v["record"]), choices)
                 letter = max(probs, key=probs.get)
-                row.update(status="ok", prediction_letter=letter, prediction_code=r["codes"][choices.index(letter)],
+                row.update(status="ok", prediction_letter=letter, prediction_code=v["codes"][choices.index(letter)],
                            probabilities=probs, latency_s=round(time.perf_counter() - t0, 4))
                 consecutive = 0
             except Exception as exc:  # noqa: BLE001
@@ -367,11 +410,6 @@ def cmd_run(args):
         sys.exit(f"--weights-dir {args.weights_dir} is not a folder (pass the folder given to setup-envs as --project-dir).")
     if not (Path(args.run_dir) / "requests.jsonl").exists():
         sys.exit(f"{args.run_dir} has no requests.jsonl; run decision_eval.py build first.")
-    limit = lh_core.MODELS_INFO[model].get("max_options", 255)
-    largest = max((r.get("n_options") or len(r["codes"]) for r in load_requests(args.run_dir, args.stride, args.sources)), default=0)
-    if largest > limit:
-        sys.exit(f"{model} scores at most {limit} options per request (its own option letters), but {args.run_dir} has requests "
-                 f"with {largest}. Build a run folder with --top {limit} or less for it.")
     free, need = lhmain.gpu_free_gb(args.gpu), lh_core.MODELS_INFO[model]["min_vram_gb"]
     if free < need:
         sys.exit(f"Only {free:.1f} GB free on GPU {args.gpu}; {model} needs {need}.")

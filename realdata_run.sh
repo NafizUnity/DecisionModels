@@ -6,7 +6,8 @@
 #   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> RESULTS_DIR/real_top20_desc
 #   bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check   # quick check: about 2 requests per model
 #   bash realdata_run.sh --desc --top 10 --sources "rrf_csv+fsn rrf_csv+fsn+syn"   # only these retrieval sources
-#   Models that cannot score the lists are skipped: MedDecider-27B/31B take at most 10 options, BioDecision 24.
+#   Each model reads at most its own number of options (MedDecider 10, BioDecision 24, the others 255): from a longer
+#   list it gets the retriever's first N codes, and the report shows its hit@k above N as N/A.
 #   --sources: the build still holds all 7 sources; only the chosen ones are run and reported. Rerun later without it
 #   (same folder) to fill in the rest; finished requests are kept.
 #   --ks "1,3,5,10,20,30,40": the report's hit@k cutoffs (default: 1,3,5,10,20,50,... up to K); --report-only reapplies them.
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
         --report-only) REPORT_ONLY=1; shift ;;
         --smoke-only) SMOKE_ONLY=1; FOREGROUND=1; shift ;;
         --smoke-n) SMOKE_N="${2:?--smoke-n needs a number}"; shift 2 ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -154,9 +155,9 @@ PY
         [ -f "$RUN/requests.jsonl" ] || stop "--report-only: $RUN has no requests.jsonl"
     fi
     if [ "$REPORT_ONLY" = 0 ]; then
-        # Skip every model that cannot score this folder's longest list (lh_core.MODELS_INFO max_options: MedDecider 10,
-        # BioDecision 24, the general models 255). --top 10 runs all six; --top 11..24 drops MedDecider; above 24 (or
-        # whole lists) only the general models run.
+        # Every model runs. One that reads fewer options than this folder's longest list (lh_core.MODELS_INFO max_options:
+        # MedDecider 10, BioDecision 24, the general models 255) gets the retriever's first N codes of each longer list
+        # (run_decision_model.model_view); say so here.
         kept="$(SOURCES_ARG="$SOURCES_ARG" "$PY" - "$RUN/requests.jsonl" $RUN_MODELS <<'PY'
 import json, os, sys
 sys.path.insert(0, ".")
@@ -167,11 +168,10 @@ largest = max(r["n_options"] for r in rows)
 keep = []
 for m in sys.argv[2:]:
     limit = lh_core.MODELS_INFO[m]["max_options"]
-    if limit >= largest:
-        keep.append(m)
-    else:
-        print(f"[skip] {m}: scores at most {limit} options per request; this run's lists hold up to {largest} "
-              f"(use --top {limit} or less to include it)", file=sys.stderr)
+    keep.append(m)
+    if limit < largest:
+        print(f"[cut] {m}: reads at most {limit} options; lists here hold up to {largest}, so it gets the retriever's "
+              f"first {limit} codes of each longer list (its hit@k above {limit} is N/A)", file=sys.stderr)
 print(" ".join(keep))
 PY
         )" || stop "could not read $RUN/requests.jsonl"
