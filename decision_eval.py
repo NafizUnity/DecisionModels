@@ -300,6 +300,9 @@ def cmd_report(args):
     suffix = "_smoke" if args.smoke else ""
     chosen = args.sources                                    # None = all sources
     used = [s for s in SOURCES if not chosen or s in chosen]
+    orders = [o for o in ORDERS if not args.orders or o in args.orders]   # --orders: None = both
+    if args.orders and sorted(set(args.orders) - set(ORDERS)):
+        sys.exit(f"STOPPED: unknown order(s) {sorted(set(args.orders) - set(ORDERS))}; choose from {' '.join(ORDERS)}")
     if chosen:
         bad = sorted(set(chosen) - set(SOURCES))
         if bad:
@@ -315,7 +318,7 @@ def cmd_report(args):
                 continue
             preds[model] = {p["request_id"]: p for p in lh_core.read_jsonl_readonly(path)[0] if p.get("status") == "ok"}
             # a smoke run covers only the requests its --stride selected; score each model against its own selection
-            selected[model] = {r["request_id"] for r in select_requests(list(reqs.values()), json.loads(meta.read_text()).get("stride", 1), chosen)}
+            selected[model] = {r["request_id"] for r in select_requests(list(reqs.values()), json.loads(meta.read_text()).get("stride", 1), chosen, args.orders)}
     if not preds:
         sys.exit(f"no {'smoke-test ' if args.smoke else ''}predictions found in {out}"
                  + ("" if args.smoke else " (for the smoke test, add --smoke)"))
@@ -344,7 +347,7 @@ def cmd_report(args):
     hit_cols = [f"model_hit@{k}" for k in KS] + ["model_mrr"] + [f"retriever_hit@{k}" for k in KS] + ["retriever_mrr"]
     rows = []
     for source in used:
-        for order in ORDERS:
+        for order in orders:
             for model, done in preds.items():
                 mine = [i for i, r in reqs.items() if r["source"] == source and r["order"] == order and i in selected[model]]
                 items = [(R(model, i), done[i]) for i in mine if i in done]
@@ -357,7 +360,7 @@ def cmd_report(args):
                              "tied_top": h["tied_top"]})
     summary = []   # pooled over sources: a smoke run has only a few requests per source
     for model, done in preds.items():
-        for order in ORDERS:
+        for order in orders:
             items = [(R(model, i), done[i]) for i in sorted(selected[model]) if i in done and reqs[i]["order"] == order]
             summary.append((NAMES[model], order, hit_metrics(items, KS, capped.get(model)), sum(reqs[i]["order"] == order for i in selected[model])))
     head = f"{'model':<17} {'order':<9} {'n ok':>11} " + " ".join(f"{'hit@' + str(k):>6}" for k in KS) + f" {'MRR':>6}  | retriever " \
@@ -381,6 +384,8 @@ def cmd_report(args):
                                        sum(reqs[i]["source"] == source for i in selected[m])) if source in used else None
                                    for m, done in preds.items()}})
     cell = lambda x: "-" if x is None else f"{x[0]}/{x[1]}"   # noqa: E731  '-' = source left out by --sources
+    if args.orders:
+        print(f"Option orders in this report (--orders): {' '.join(orders)}")
     if chosen:
         print(f"Sources in this report (--sources): {' '.join(used)}; the counts table lists all of them, '-' = left out")
     print("Requests per retrieval source (one request = one entity x one option order):")
@@ -393,8 +398,8 @@ def cmd_report(args):
     print(head)
     for name, order, h, n_exp in summary:
         print(f"{name:<17} {order:<9} {h['n']:>5}/{n_exp:<5} " + " ".join(f"{f3(h[f'model_hit@{k}']):>6}" for k in KS)
-              + f" {h['model_mrr']:>6.3f}  |           " + " ".join(f"{h[f'retriever_hit@{k}']:>5.3f}" for k in KS)
-              + f" {h['retriever_mrr']:>6.3f} | {h['tied_top']}")
+              + f" {f3(h['model_mrr']):>6}  |           " + " ".join(f"{f3(h[f'retriever_hit@{k}']):>5}" for k in KS)
+              + f" {f3(h['retriever_mrr']):>6} | {h['tied_top']}")
     with open(out / f"ranking_results{suffix}.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -421,6 +426,8 @@ def cmd_report(args):
              f"(the same question a --top {n} build gives), so a reference code ranked below {n} is a miss for it, its hit@k "
              f"above {n} is N/A, and its MRR and Acc are over those {n} codes." for m, n in capped.items()]),
           *([""] if capped else []),
+          *([f"**Option order: only {', '.join(orders)}** (chosen with --orders); the other order is not in the tables.", ""]
+            if args.orders else []),
           *([f"**Sources: only {', '.join(used)}** (chosen with --sources). The summary pools these sources only; the "
              "counts table lists every source, with '-' for those left out.", ""] if chosen else []),
           "## Requests per retrieval source", "",
@@ -436,10 +443,10 @@ def cmd_report(args):
           "## Summary (" + ("all sources pooled" if not chosen else "the chosen sources pooled") + ")", "",
           "| Model | Order | n ok | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | " + " | ".join(f"retriever @{k}" for k in KS) + " | retriever MRR | Tied top |"]
     md.append(separator(md[-1]))
-    md += [f"| {name} | {order} | {h['n']}/{n_exp} | " + " | ".join(f3(h[f'model_hit@{k}']) for k in KS) + f" | {h['model_mrr']:.3f} | "
-           + " | ".join(f"{h[f'retriever_hit@{k}']:.3f}" for k in KS) + f" | {h['retriever_mrr']:.3f} | {h['tied_top']} |"
+    md += [f"| {name} | {order} | {h['n']}/{n_exp} | " + " | ".join(f3(h[f'model_hit@{k}']) for k in KS) + f" | {f3(h['model_mrr'])} | "
+           + " | ".join(f3(h[f'retriever_hit@{k}']) for k in KS) + f" | {f3(h['retriever_mrr'])} | {h['tied_top']} |"
            for name, order, h, n_exp in summary] + [""]
-    for order in ORDERS:
+    for order in orders:
         md += [f"## Option order: {order}", "",
                "| Source | Model | n | Options (median) | In list | " + " | ".join(f"hit@{k}" for k in KS) + " | MRR | "
                + " | ".join(f"retr @{k}" for k in KS) + " | retr MRR | Acc \\| in list | Brier | ECE |"]
@@ -512,6 +519,8 @@ if __name__ == "__main__":
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     r.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
                    help="report only these retrieval sources (space- or comma-separated; default: all)")
+    r.add_argument("--orders", type=parse_sources, default=None, metavar="'original'",
+                   help="report only these option orders (original, shuf1; default: both)")
     r.add_argument("--ks", type=parse_ks, default=None, metavar="'1,3,5,10'",
                    help="hit@k cutoffs to report (comma- or space-separated; default: 1,3,5,10,20,50,... up to the list length)")
     c = sub.add_parser("compare", help="detailed model-vs-retriever table from an existing ranking_results.csv (no rerun)")

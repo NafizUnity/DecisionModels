@@ -60,6 +60,8 @@ the background and writes the report plus `failure_summary_<MODEL>.txt`. Rerunni
 still holds every source, so the same folder is used: a later run without `--sources` (or with other sources) adds the
 rest and skips the requests already done. The report pools only the chosen sources and says which ones they are; the
 per-source counts table lists all 7, with `-` for those left out. Run `--report-only` without `--sources` for every source.
+`--orders original` runs and reports only the retriever's option order (default: original and shuf1), which halves the
+GPU time; a later run without it adds the shuf1 requests to the same folder.
 `--ks "1,3,5,10,20,30,40"` sets the report's hit@k cutoffs (default: 1, 3, 5, 10, 20, 50, ... up to K). Only the report
 uses them, so `--report-only --foreground --ks "..."` redoes the tables without running a model. A k above the longest list is dropped
 with a warning (it would repeat the last column).

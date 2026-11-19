@@ -147,18 +147,23 @@ def cmd_build(args):
 
 # --- run --------------------------------------------------------------------------------------------------------------
 def parse_sources(text):
-    """--sources 'a b' or 'a,b' -> a tuple of source names; empty -> None (all sources)."""
+    """--sources / --orders 'a b' or 'a,b' -> a tuple of names; empty -> None (all)."""
     names = tuple(dict.fromkeys((text or "").replace(",", " ").split()))
     return names or None
 
 
-def load_requests(run_dir, stride, sources=None):
+def load_requests(run_dir, stride, sources=None, orders=None):
     path = Path(run_dir) / "requests.jsonl"
-    return select_requests([json.loads(l) for l in open(path, encoding="utf8")], stride, sources)
+    return select_requests([json.loads(l) for l in open(path, encoding="utf8")], stride, sources, orders)
 
 
-def select_requests(rows, stride=1, sources=None):
-    """The requests of the given sources (None = all), then about 1 in `stride` of them."""
+def select_requests(rows, stride=1, sources=None, orders=None):
+    """The requests of the given sources and option orders (None = all), then about 1 in `stride` of them."""
+    if orders:
+        unknown = sorted(set(orders) - {r.get("order") for r in rows})
+        if unknown:
+            sys.exit(f"STOPPED: order(s) {unknown} are not in requests.jsonl; it holds {sorted({r.get('order') for r in rows})}")
+        rows = [r for r in rows if r.get("order") in orders]
     if sources:
         unknown = sorted(set(sources) - {r.get("source") for r in rows})
         if unknown:
@@ -189,7 +194,7 @@ EXPORT_COLUMNS = ("request_id", "entity_id", "source", "n_options", "order", "mo
                   "probability", "prob_rank", "retriever_rank", "is_prediction", "is_gt", "answerable", "n_tied_top")
 
 
-def export_options(run_dir, model, smoke, sources=None):
+def export_options(run_dir, model, smoke, sources=None, orders=None):
     """Write two timestamped files to run_dir/option_probs/ (name <MODEL>[_smoke]_<run>_<UTC time>), plus a .json sidecar:
       .jsonl  one self-contained record per selected request: the model input (state, question, options: the codes in the
               order shown; older top-k runs: letter -> code), the ground truth, the prediction and every option's
@@ -222,8 +227,8 @@ def export_options(run_dir, model, smoke, sources=None):
             last_error[row["request_id"]] = row
     limit = lh_core.MODELS_INFO.get(model, {}).get("max_options", 255)
     rankings = retriever_rankings(all_rows) if any((r.get("n_options") or 0) > limit for r in requests) else {}
-    if sources:   # the chosen sources, plus every request that already has a row (from an earlier run on other sources)
-        chosen = {r["request_id"] for r in select_requests(all_rows, 1, sources)}
+    if sources or orders:   # the chosen sources/orders, plus every request that already has a row (from an earlier run)
+        chosen = {r["request_id"] for r in select_requests(all_rows, 1, sources, orders)}
         requests = [r for r in requests if r["request_id"] in chosen or r["request_id"] in latest or r["request_id"] in last_error]
     revision = json.loads((HERE / "revisions.lock.json").read_text())["models"].get(model, {}).get("revision")
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -306,7 +311,7 @@ def export_options(run_dir, model, smoke, sources=None):
 
 
 def cmd_export(args):
-    export_options(args.run_dir, args.model.upper(), args.smoke, args.sources)
+    export_options(args.run_dir, args.model.upper(), args.smoke, args.sources, args.orders)
 
 
 def cmd_worker(args):
@@ -336,7 +341,7 @@ def cmd_worker(args):
         sys.exit(f"{out_path.name} exists without {meta_path.name}, so its requests cannot be checked; move it away or use a new --run-dir.")
     else:
         lh_core.write_json_atomic(meta_path, {"requests_sha256": requests_sha, "model": model, "stride": args.stride})
-    requests = load_requests(run_dir, args.stride, args.sources)
+    requests = load_requests(run_dir, args.stride, args.sources, args.orders)
     old = [r["request_id"] for r in requests if lh_core.QUESTION_ID not in r["record"]["questions"]]
     if old:   # only the models read the question; report and export work on older run folders too
         sys.exit(f"STOPPED: {len(old)} request(s) in {run_dir / 'requests.jsonl'} were built by an older version (question id "
@@ -353,6 +358,7 @@ def cmd_worker(args):
     done = {r["request_id"] for r in lh_core.read_jsonl_recovering(out_path) if r.get("status") == "ok"} if out_path.exists() else set()
     todo = [r for r in requests if r["request_id"] not in done]
     lh_core.log(f"{model}: {len(requests)} requests" + (f" (sources: {' '.join(args.sources)})" if args.sources else "")
+                + (f" (orders: {' '.join(args.orders)})" if args.orders else "")
                 + f", {len(done)} already done, {len(todo)} to run -> {out_path.name}")
     consecutive, t_start = 0, time.perf_counter()
     with lh_core.JsonlAppender(out_path) as sink:
@@ -395,7 +401,7 @@ def cmd_worker(args):
     else:
         lh_core.log(f"{model}: finished, {len(wanted)}/{len(wanted)} ok")
     if ok & wanted:
-        export_options(run_dir, model, args.stride > 1, args.sources)
+        export_options(run_dir, model, args.stride > 1, args.sources, args.orders)
 
 
 def cmd_run(args):
@@ -418,7 +424,8 @@ def cmd_run(args):
     lh_core.log(f"{model}: {python} on physical GPU {args.gpu} ({free:.1f} GB free)")
     rc = subprocess.run([python, str(HERE / "run_decision_model.py"), "worker", "--model", model, "--run-dir", str(Path(args.run_dir).resolve()),
                          "--weights-dir", args.weights_dir, "--stride", str(args.stride)]
-                        + (["--sources", " ".join(args.sources)] if args.sources else []), cwd=str(HERE), env=env).returncode
+                        + (["--sources", " ".join(args.sources)] if args.sources else [])
+                        + (["--orders", " ".join(args.orders)] if args.orders else []), cwd=str(HERE), env=env).returncode
     sys.exit(rc)
 
 
@@ -598,6 +605,8 @@ def main():
         if name in ("run", "worker", "export"):
             s.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
                            help="only the requests of these retrieval sources (space- or comma-separated; default: all)")
+            s.add_argument("--orders", type=parse_sources, default=None, metavar="'original'",
+                           help="only the requests in these option orders (original, shuf1; default: both)")
     args = p.parse_args()
     {"build": cmd_build, "run": cmd_run, "worker": cmd_worker, "report": cmd_report, "export": cmd_export}[args.cmd](args)
 

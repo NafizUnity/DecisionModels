@@ -11,7 +11,8 @@
 #   --sources: the build still holds all 7 sources; only the chosen ones are run and reported. Rerun later without it
 #   (same folder) to fill in the rest; finished requests are kept.
 #   --ks "1,3,5,10,20,30,40": the report's hit@k cutoffs (default: 1,3,5,10,20,50,... up to K); --report-only reapplies them.
-#   options: --models "DREX CLEF"  --sources "A B"  --ks "1,3,5"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
+#   --orders original: only the retriever's order (default: original and shuf1); a later run without it adds shuf1.
+#   options: --models "DREX CLEF"  --sources "A B"  --orders original  --ks "1,3,5"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
 #            --foreground  --report-only  --smoke-only (stop after the smoke test)  --smoke-n N (smoke sample of at least N)
 #
 # Paths (data, index, models, RESULTS_DIR) come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
@@ -22,13 +23,14 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGS=("$@")
 CONF="$HERE/realdata.conf"; DESC=0; TOP=""; NAME=""; GPU_ARG=""; MODELS_ARG=""; SMOKE=1; FOREGROUND=0; REPORT_ONLY=0
-SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""; KS_ARG=""
+SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""; KS_ARG=""; ORDERS_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --desc) DESC=1; shift ;;
         --top) TOP="${2:?--top needs K}"; shift 2 ;;
         --models) MODELS_ARG="${2:?--models needs a list}"; shift 2 ;;
         --sources) SOURCES_ARG="${2:?--sources needs a list}"; shift 2 ;;
+        --orders) ORDERS_ARG="${2:?--orders needs original and/or shuf1}"; shift 2 ;;
         --ks) KS_ARG="${2:?--ks needs a list such as 1,3,5,10}"; shift 2 ;;
         --gpu) GPU_ARG="${2:?--gpu needs an index}"; shift 2 ;;
         --name) NAME="${2:?--name needs a folder}"; shift 2 ;;
@@ -38,7 +40,7 @@ while [ $# -gt 0 ]; do
         --report-only) REPORT_ONLY=1; shift ;;
         --smoke-only) SMOKE_ONLY=1; FOREGROUND=1; shift ;;
         --smoke-n) SMOKE_N="${2:?--smoke-n needs a number}"; shift 2 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -98,6 +100,21 @@ PY
     )" || stop "--sources: see the message above"
     SRC_OPT=(--sources "$SOURCES_ARG")
 fi
+if [ -n "$ORDERS_ARG" ]; then   # --orders: added to the same option list, so every step gets it
+    ORDERS_ARG="$("$PY" - "$ORDERS_ARG" <<'PY'
+import sys
+sys.path.insert(0, ".")
+from decision_eval import ORDERS
+from run_decision_model import parse_sources
+names = parse_sources(sys.argv[1]) or ()
+bad = [n for n in names if n not in ORDERS]
+if bad or not names:
+    sys.exit(f"unknown order(s) {bad or sys.argv[1]!r}; choose from: {' '.join(ORDERS)}")
+print(" ".join(names))
+PY
+    )" || stop "--orders: see the message above"
+    SRC_OPT+=(--orders "$ORDERS_ARG")
+fi
 # ---- --ks: the report's hit@k cutoffs (only the report reads them; changing them needs no model run) ------------------
 KS_OPT=()
 if [ -n "$KS_ARG" ]; then
@@ -117,7 +134,7 @@ fi
 # ======================================================================================================================
 # Stage 1 (this terminal): checks and build. Stage 2 (background): smoke test, full runs, report.
 if [ "${REALDATA_STAGE:-1}" = 1 ]; then
-    [ "$REPORT_ONLY" = 1 ] && say "Report only: $RUN | models $RUN_MODELS" || say "Run folder $RUN | options: $([ "$DESC" = 1 ] && echo "code + description" || echo "bare codes"); $([ -n "$TOP" ] && echo "top $TOP" || echo "whole lists") | models $RUN_MODELS | sources ${SOURCES_ARG:-all} | GPU $GPU"
+    [ "$REPORT_ONLY" = 1 ] && say "Report only: $RUN | models $RUN_MODELS" || say "Run folder $RUN | options: $([ "$DESC" = 1 ] && echo "code + description" || echo "bare codes"); $([ -n "$TOP" ] && echo "top $TOP" || echo "whole lists") | models $RUN_MODELS | sources ${SOURCES_ARG:-all} | orders ${ORDERS_ARG:-all} | GPU $GPU"
     [ -d "$MODELS" ] || stop "models folder $MODELS not found: run bash realdata_setup.sh"
     if [ "$REPORT_ONLY" = 0 ]; then
         placeholder "$DATA" && stop "DATA is not set in $CONF"
@@ -158,12 +175,13 @@ PY
         # Every model runs. One that reads fewer options than this folder's longest list (lh_core.MODELS_INFO max_options:
         # MedDecider 10, BioDecision 24, the general models 255) gets the retriever's first N codes of each longer list
         # (run_decision_model.model_view); say so here.
-        kept="$(SOURCES_ARG="$SOURCES_ARG" "$PY" - "$RUN/requests.jsonl" $RUN_MODELS <<'PY'
+        kept="$(SOURCES_ARG="$SOURCES_ARG" ORDERS_ARG="$ORDERS_ARG" "$PY" - "$RUN/requests.jsonl" $RUN_MODELS <<'PY'
 import json, os, sys
 sys.path.insert(0, ".")
 import lh_core
 from run_decision_model import parse_sources, select_requests
-rows = select_requests(list(map(json.loads, open(sys.argv[1], encoding="utf8"))), 1, parse_sources(os.environ["SOURCES_ARG"]))
+rows = select_requests(list(map(json.loads, open(sys.argv[1], encoding="utf8"))), 1, parse_sources(os.environ["SOURCES_ARG"]),
+                       parse_sources(os.environ["ORDERS_ARG"]))
 largest = max(r["n_options"] for r in rows)
 keep = []
 for m in sys.argv[2:]:
@@ -226,12 +244,13 @@ run_model() {
 if [ "$REPORT_ONLY" = 0 ]; then
     if [ "$SMOKE" = 1 ]; then
         if [ -n "$SMOKE_N" ]; then   # the largest stride whose sample (a hash of the request id, as in the worker) has >= N requests
-            SMOKE_STRIDE="$(SOURCES_ARG="$SOURCES_ARG" "$PY" - "$RUN/requests.jsonl" "$SMOKE_N" <<'PY'
+            SMOKE_STRIDE="$(SOURCES_ARG="$SOURCES_ARG" ORDERS_ARG="$ORDERS_ARG" "$PY" - "$RUN/requests.jsonl" "$SMOKE_N" <<'PY'
 import hashlib, json, os, sys
 sys.path.insert(0, ".")
 from run_decision_model import parse_sources, select_requests
 rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf8") if line.strip()]
-ids = [r["request_id"] for r in select_requests(rows, 1, parse_sources(os.environ["SOURCES_ARG"]))]   # within --sources
+ids = [r["request_id"] for r in select_requests(rows, 1, parse_sources(os.environ["SOURCES_ARG"]),
+                                                parse_sources(os.environ["ORDERS_ARG"]))]   # within --sources / --orders
 n, hashes = int(sys.argv[2]), [int(hashlib.sha256(i.encode()).hexdigest()[:8], 16) for i in ids]
 s = max(2, len(ids) // n)
 while s > 2 and sum(h % s == 0 for h in hashes) < n:
@@ -268,7 +287,7 @@ PY
     done
 fi
 
-say "Report${SOURCES_ARG:+ (sources: $SOURCES_ARG)}"
+say "Report${SOURCES_ARG:+ (sources: $SOURCES_ARG)}${ORDERS_ARG:+ (orders: $ORDERS_ARG)}"
 "$PY" decision_eval.py report --run-dir "$RUN" ${SRC_OPT[@]+"${SRC_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "report failed (see above)"
 for m in $RUN_MODELS; do
     if [ -f "$RUN/predictions_${m}.jsonl" ]; then
