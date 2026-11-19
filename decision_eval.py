@@ -63,7 +63,24 @@ def merged_context(entity, query):
     return entity if entity.lower() == query.lower() else f"{entity} (expanded: {query})"
 
 
-def validate(data, top=None):
+def cap_rankings(data):
+    """Keep the first MAX_OPTIONS codes of every ranking (the most the models take; a retriever may return more, e.g.
+    500). Done right after loading, so validation, descriptions, retriever ranks and requests all see the same codes:
+    a reference code ranked below MAX_OPTIONS is not an option and counts as a miss. Returns (lists cut, longest list)."""
+    cut, longest = 0, 0
+    for d in data:
+        if not isinstance(d, dict) or not isinstance(d.get("rankings"), dict):
+            continue   # validate() reports it
+        for s, r in d["rankings"].items():
+            if isinstance(r, list):
+                longest = max(longest, len(r))
+                if len(r) > MAX_OPTIONS:
+                    d["rankings"][s] = r[:MAX_OPTIONS]
+                    cut += 1
+    return cut, longest
+
+
+def validate(data):
     """Every problem in the file (entity ids and code values only; no entity or query text). Empty list = usable."""
     if not isinstance(data, list) or not data:
         return ["the file must hold a non-empty JSON list of entities"]
@@ -102,9 +119,8 @@ def validate(data, top=None):
                 problems.append(f"{where}: {source} lists {len(ranking) - len(set(ranking))} code(s) more than once")
             elif len(ranking) < 2:
                 problems.append(f"{where}: {source} has {len(ranking)} code; a choice needs at least 2")
-            elif len(ranking[:top]) > MAX_OPTIONS:   # --top K: only the first K codes become options
-                problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS} "
-                                f"(use --top {MAX_OPTIONS} or less)")
+            elif len(ranking) > MAX_OPTIONS:   # cap_rankings() runs first; this guards a caller that skips it
+                problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS}")
     return problems
 
 
@@ -138,7 +154,8 @@ def cmd_build(args):
         sys.exit(f"{out} already has requests or predictions; use a new --run-dir")
     if args.top is not None and args.top > MAX_OPTIONS:
         sys.exit(f"STOPPED: --top {args.top} is above {MAX_OPTIONS}, the most options the models take; nothing was written")
-    problems = validate(data, args.top)
+    n_cut, longest = cap_rankings(data)
+    problems = validate(data)
     if problems:
         for line in problems[:30]:
             print("  " + line)
@@ -178,6 +195,9 @@ def cmd_build(args):
                                  "type": "choice", "instructions": QUESTION,
                                  "criteria": {c: desc[c] if desc else None for c in codes}}}}})
     held = "a source's whole ranking" if top is None else f"the first {top} codes of a source's ranking"
+    if n_cut:
+        held += (f" ({n_cut} lists held more than {MAX_OPTIONS} codes, up to {longest}: only their first {MAX_OPTIONS} "
+                 "are read, the most the models take; a reference code ranked lower counts as a miss)")
     KS = cutoffs(top, max(max(L) for L in lengths.values()))
     print(f"{len(data)} entities. Every request holds {held}. Retriever: share of entities with the reference code "
           f"within its top k" + (f" (k above {top} cannot exceed @{top}):" if top else ":"))
@@ -202,7 +222,8 @@ def cmd_build(args):
     lh_core.write_json_atomic(out / "build_meta.json", {
         "src": str(Path(args.src).resolve()), "src_sha256": sha(args.src), "option_text": option_text,
         "descriptions": str(Path(args.descriptions).resolve()) if desc else None,
-        "descriptions_sha256": sha(args.descriptions) if desc else None, "top": top, "requests": len(rows)})
+        "descriptions_sha256": sha(args.descriptions) if desc else None, "top": top, "requests": len(rows),
+        "max_options_read": MAX_OPTIONS, "lists_cut_to_max": n_cut, "longest_list_in_src": longest})
     print(f"options: {'code + ' + option_text if desc else 'bare codes'}; {'whole lists' if top is None else f'top {top} per list'}")
     print(f"wrote {len(rows)} requests for {len(data)} entities ({sum(r['n_options'] for r in rows)} options in all) -> {out/'requests.jsonl'}")
 
@@ -348,6 +369,7 @@ def cmd_report(args):
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
+    cut = json.loads((out / "build_meta.json").read_text()) if (out / "build_meta.json").exists() else {}
     text = "codes with descriptions" if any(r.get("option_text", "code") != "code" for r in reqs.values()) else "bare codes"
     lists = "whole retrieval lists" if tops == {None} else f"the retriever's top {'/'.join(map(str, sorted(t or 0 for t in tops)))}"
     md = [f"# Decision models re-ranking {lists} (no notes, {text})" + (" - SMOKE TEST (a small sample; not results)" if args.smoke else ""), "",
@@ -359,6 +381,9 @@ def cmd_report(args):
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
           "is the same in both orders.", "",
           *([clef_line, ""] if "CLEF" in preds else []),
+          *([f"**Lists cut to {cut['max_options_read']} codes:** {cut['lists_cut_to_max']} source lists held more (up to "
+             f"{cut['longest_list_in_src']}); only their first {cut['max_options_read']} codes are options, so a reference "
+             "code ranked lower is a miss for the models and the retriever alike.", ""] if cut.get("lists_cut_to_max") else []),
           *([f"**Sources: only {', '.join(used)}** (chosen with --sources). The summary pools these sources only; the "
              "counts table lists every source, with '-' for those left out.", ""] if chosen else []),
           "## Requests per retrieval source", "",
