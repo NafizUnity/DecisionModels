@@ -301,8 +301,9 @@ def cmd_report(args):
     chosen = args.sources                                    # None = all sources
     used = [s for s in SOURCES if not chosen or s in chosen]
     orders = [o for o in ORDERS if not args.orders or o in args.orders]   # --orders: None = both
-    if args.orders and sorted(set(args.orders) - set(ORDERS)):
-        sys.exit(f"STOPPED: unknown order(s) {sorted(set(args.orders) - set(ORDERS))}; choose from {' '.join(ORDERS)}")
+    bad_orders = sorted(set(args.orders or ()) - set(ORDERS))
+    if bad_orders:
+        sys.exit(f"STOPPED: unknown order(s) {bad_orders}; choose from {' '.join(ORDERS)}")
     if chosen:
         bad = sorted(set(chosen) - set(SOURCES))
         if bad:
@@ -365,11 +366,13 @@ def cmd_report(args):
             summary.append((NAMES[model], order, hit_metrics(items, KS, capped.get(model)), sum(reqs[i]["order"] == order for i in selected[model])))
     head = f"{'model':<17} {'order':<9} {'n ok':>11} " + " ".join(f"{'hit@' + str(k):>6}" for k in KS) + f" {'MRR':>6}  | retriever " \
            + " ".join(f"{'@' + str(k):>5}" for k in KS) + f" {'MRR':>6} | tied"
-    if "CLEF" in preds:
-        pairs, differ = clef_order_check(reqs, preds["CLEF"])
+    clef_on = "CLEF" in preds and set(orders) >= {"original", "shuf1"}   # needs both orders (not with --orders original)
+    if clef_on:
+        pairs, differ = clef_order_check(reqs, {i: p for i, p in preds["CLEF"].items() if i in selected["CLEF"]})
         clef_line = (f"Clef order check: {pairs} original/shuf1 pairs compared, {differ} with different probabilities"
                      + (" (expected 0: Clef sorts options by code; investigate)" if differ else " (as expected)")
-                     + ("" if pairs else " (no pairs: the smoke sample held no matching requests)"))
+                     + ("" if pairs else (" (no pairs: the smoke sample held no matching requests)" if args.smoke
+                                          else " (no pairs: Clef has no result yet for both orders of an entity)")))
         print(clef_line)
     counts = []
     for source in SOURCES:
@@ -418,7 +421,7 @@ def cmd_report(args):
           "Retriever columns: the same measure for the source's own ranking on the same requests. MRR: mean of 1/rank (0 if absent). "
           "Acc, Brier and ECE use only requests whose list holds the reference code. Clef sorts options by code, so its input "
           "is the same in both orders.", "",
-          *([clef_line, ""] if "CLEF" in preds else []),
+          *([clef_line, ""] if clef_on else []),
           *([f"**Lists cut to {cut['max_options_read']} codes:** {cut['lists_cut_to_max']} source lists held more (up to "
              f"{cut['longest_list_in_src']}); only their first {cut['max_options_read']} codes are options, so a reference "
              "code ranked lower is a miss for the models and the retriever alike.", ""] if cut.get("lists_cut_to_max") else []),
@@ -426,7 +429,8 @@ def cmd_report(args):
              f"(the same question a --top {n} build gives), so a reference code ranked below {n} is a miss for it, its hit@k "
              f"above {n} is N/A, and its MRR and Acc are over those {n} codes." for m, n in capped.items()]),
           *([""] if capped else []),
-          *([f"**Option order: only {', '.join(orders)}** (chosen with --orders); the other order is not in the tables.", ""]
+          *([f"**Option order: only {', '.join(orders)}** (chosen with --orders): the results tables hold only this order; the requests-per-source table still counts the "
+             "requests of every order the folder was built with.", ""]
             if args.orders else []),
           *([f"**Sources: only {', '.join(used)}** (chosen with --sources). The summary pools these sources only; the "
              "counts table lists every source, with '-' for those left out.", ""] if chosen else []),

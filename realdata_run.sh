@@ -84,7 +84,7 @@ case "$NAME" in /*) RUN="$NAME" ;; *) RUN="$RESULTS_DIR/$NAME" ;; esac   # --nam
 cd "$HERE"
 
 # ---- --sources: check the names, pass them on as one space-separated list -----------------------------------------------
-SRC_OPT=()
+SELECT_OPT=()
 if [ -n "$SOURCES_ARG" ]; then
     SOURCES_ARG="$("$PY" - "$SOURCES_ARG" <<'PY'
 import sys
@@ -98,7 +98,7 @@ if bad or not names:
 print(" ".join(names))
 PY
     )" || stop "--sources: see the message above"
-    SRC_OPT=(--sources "$SOURCES_ARG")
+    SELECT_OPT=(--sources "$SOURCES_ARG")
 fi
 if [ -n "$ORDERS_ARG" ]; then   # --orders: added to the same option list, so every step gets it
     ORDERS_ARG="$("$PY" - "$ORDERS_ARG" <<'PY'
@@ -113,7 +113,7 @@ if bad or not names:
 print(" ".join(names))
 PY
     )" || stop "--orders: see the message above"
-    SRC_OPT+=(--orders "$ORDERS_ARG")
+    SELECT_OPT+=(--orders "$ORDERS_ARG")
 fi
 # ---- --ks: the report's hit@k cutoffs (only the report reads them; changing them needs no model run) ------------------
 KS_OPT=()
@@ -223,7 +223,7 @@ run_model() {
     for attempt in 1 2; do
         out="$(mktemp)"
         set +e
-        "$PY" -u run_decision_model.py run "$m" --gpu "$GPU" --run-dir "$RUN" --weights-dir "$MODELS" ${SRC_OPT[@]+"${SRC_OPT[@]}"} "$@" 2>&1 | tee "$out"
+        "$PY" -u run_decision_model.py run "$m" --gpu "$GPU" --run-dir "$RUN" --weights-dir "$MODELS" ${SELECT_OPT[@]+"${SELECT_OPT[@]}"} "$@" 2>&1 | tee "$out"
         rc=${PIPESTATUS[0]}
         set -e
         if [ "$rc" -ne 0 ]; then rm -f "$out"; say "$m: stopped with exit code $rc (see above)"; return 2; fi
@@ -265,7 +265,11 @@ PY
             meta="$RUN/predictions_${m}_smoke.jsonl.meta.json"
             if [ -f "$meta" ]; then
                 old="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stride"))' "$meta")"
-                [ "$old" = "$SMOKE_STRIDE" ] || stop "$m already has a smoke test with stride $old in $RUN; use the same SMOKE_STRIDE, or --name for a new folder"
+                if [ "$old" != "$SMOKE_STRIDE" ]; then
+                    # e.g. --smoke-n with other --sources/--orders than last time gives another stride: the model was
+                    # smoke-tested here already, so go on to the full run rather than stop
+                    say "Smoke test: $m skipped (smoke-tested in this folder before, with stride $old)"; continue
+                fi
             fi
             say "Smoke test: $m (every ${SMOKE_STRIDE}th request${SMOKE_N:+, chosen for at least $SMOKE_N})"
             run_model "$m" --stride "$SMOKE_STRIDE" || stop "smoke test of $m did not finish cleanly (see above); fix it, then rerun"
@@ -273,7 +277,7 @@ PY
         done
         if [ "$smoked" = 1 ]; then
             say "Smoke report"
-            "$PY" decision_eval.py report --run-dir "$RUN" --smoke ${SRC_OPT[@]+"${SRC_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "smoke report failed (see above)"
+            "$PY" decision_eval.py report --run-dir "$RUN" --smoke ${SELECT_OPT[@]+"${SELECT_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "smoke report failed (see above)"
         fi
         if [ "$SMOKE_ONLY" = 1 ]; then say "DONE (smoke test only): $RUN"; exit 0; fi
     fi
@@ -288,10 +292,11 @@ PY
 fi
 
 say "Report${SOURCES_ARG:+ (sources: $SOURCES_ARG)}${ORDERS_ARG:+ (orders: $ORDERS_ARG)}"
-"$PY" decision_eval.py report --run-dir "$RUN" ${SRC_OPT[@]+"${SRC_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "report failed (see above)"
+"$PY" decision_eval.py report --run-dir "$RUN" ${SELECT_OPT[@]+"${SELECT_OPT[@]}"} ${KS_OPT[@]+"${KS_OPT[@]}"} || stop "report failed (see above)"
 for m in $RUN_MODELS; do
     if [ -f "$RUN/predictions_${m}.jsonl" ]; then
-        "$PY" show_predictions.py --run-dir "$RUN" --model "$m" --limit 0 > "$RUN/failure_summary_${m}.txt" 2>&1 \
+        one_order=(); [[ -n "$ORDERS_ARG" && "$ORDERS_ARG" != *" "* ]] && one_order=(--order "$ORDERS_ARG")
+        "$PY" show_predictions.py --run-dir "$RUN" --model "$m" --limit 0 ${one_order[@]+"${one_order[@]}"} > "$RUN/failure_summary_${m}.txt" 2>&1 \
             && say "Failure summary: $RUN/failure_summary_${m}.txt" || say "WARN: show_predictions.py failed for $m (see $RUN/failure_summary_${m}.txt)"
     fi
 done

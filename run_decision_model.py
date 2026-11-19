@@ -606,7 +606,7 @@ def main():
             s.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",
                            help="only the requests of these retrieval sources (space- or comma-separated; default: all)")
             s.add_argument("--orders", type=parse_sources, default=None, metavar="'original'",
-                           help="only the requests in these option orders (original, shuf1; default: both)")
+                           help="only the requests in these option orders (those in requests.jsonl: original, shuf1 for decision_eval builds; default: all)")
     args = p.parse_args()
     {"build": cmd_build, "run": cmd_run, "worker": cmd_worker, "report": cmd_report, "export": cmd_export}[args.cmd](args)
 
