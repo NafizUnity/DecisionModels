@@ -1,0 +1,22 @@
+# LLM picker settings, read by picker_run.sh.
+# Copy to picker.conf (kept out of git) and edit the paths: cp picker.conf.example picker.conf
+# Plain bash: no spaces around '='; quote values with spaces.
+
+# The LLM's folder (config.json, tokenizer, safetensors). On a server set up for MedDecider-31B this is the base model
+# realdata_setup.sh placed under MODELS: $MODELS/gemma-4-31b-it (google/gemma-4-31b-it @ 842da379).
+LLM_MODEL="/path/to/models/gemma-4-31b-it"
+
+# Conda env that runs the LLM (transformers 5.22.2, torch 2.8, pyyaml, tqdm): the medical models' env.
+LLM_ENV="realdata-med"
+
+# Where the decision-model run folders are (realdata.conf RESULTS_DIR); picker_run.sh --dm-run names one of them.
+DM_RESULTS_DIR="/path/to/RealData/results"
+
+# Where picker folders go (one subfolder per build). They hold entity text: keep them on the server.
+PICKER_RESULTS_DIR="/path/to/RealData/picker_results"
+
+# The conda that holds LLM_ENV (realdata_setup.sh installs it as BASE/miniforge3/bin/conda). Empty = conda on PATH.
+CONDA=""
+
+# Physical GPU index (Gemma 4 31B in bf16 needs about 62 GB).
+GPU=0

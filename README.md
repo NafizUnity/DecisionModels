@@ -341,6 +341,36 @@ most equal the retriever's hit@K. Choose K on the command line; use one folder p
     tail -f top${K}_run.log
     $PY decision_eval.py report --run-dir $RUN_TOP
 
+## 10. LLM picker on a decision model's reranking
+
+The decision model (DM) reranks each retriever list. The LLM picker (Gemma 4 31B, `llm_picker.py`, the RealData copy
+of `GeminiOps/run_rag_picker.py`) then sees the DM's top K codes with their descriptions and picks one. It sees the same
+entity text as the DM and, for now, no clinical note. It needs a finished DM run built with `--desc`.
+
+    cp picker.conf.example picker.conf      # once: LLM_MODEL, LLM_ENV, DM_RESULTS_DIR, PICKER_RESULTS_DIR, CONDA, GPU
+    bash picker_run.sh --dm-run real_whole_list_desc --dms DREX --sources rrf_fsn+syn --ks 3 --limit 2 --foreground   # smoke
+    bash picker_run.sh --dm-run real_whole_list_desc --dms "DREX MEDDECIDER31" \
+         --sources "rrf_csv+fsn rrf_fsn+syn rrf_csv+fsn+syn" --ks "3,5,10,20"
+
+The pipeline has three steps:
+
+- `picker_build.py`: for each source × DM, it sorts the codes the DM read by the DM's probabilities.
+  - It writes the picker's own input (`--format native`, the default): a consolidated JSON in retriever order, plus a reranked JSON in DM order.
+  - Or it writes a JSONL with the candidates already in DM order (`--format requests`).
+  - It writes one config per K.
+  - A K above what the DM read (MedDecider-31B reads 10) is not built and reads N/A.
+  - Entities the DM has no result for are left out and counted.
+- `llm_picker.py`: runs every config in one model load and skips the configs that are finished.
+- `picker_report.py`: compares the LLM's top-1 with the DM's top-1 and with the most it can reach at K (the DM's hit@K).
+  It also lists the fixed, broke, no_answer and not_in_list counts.
+
+The report is saved as `report_<UTC time>.md/.csv`. `--report-only` rebuilds it, and old reports are kept.
+`--batch-size N` answers N entities per generate call. With 6 entities it was 3–4× faster.
+bf16 results depend on the batch shape, so a borderline pick can differ between batch sizes. Use one batch size for
+every run you compare. Each prediction file's `.meta.json` records the size, and the report warns when sizes are mixed.
+`--stop-tokens tokenizer_eos` gives the uploaded script's generation. There, Gemma does not stop at the end of its
+turn, and its last answer is scored. Picker folders hold entity text, so keep them on the server.
+
 ## Data handling
 
 `requests.jsonl` and the `option_probs/*.jsonl` exports in the run folder contain entity and query text, so keep the run folder with the data. Logs hold only counts and error types.

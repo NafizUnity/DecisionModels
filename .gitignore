@@ -12,3 +12,6 @@ data/
 setup_logs/
 # local settings for realdata_setup.sh / realdata_run.sh (server paths)
 realdata.conf
+# local settings for picker_run.sh (server paths)
+picker.conf
+picker_results/
