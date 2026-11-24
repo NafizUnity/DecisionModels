@@ -15,6 +15,10 @@ retriever's list), sorts them high to low (ties: the earlier code in the shown o
   truth.jsonl                         ids, codes and ranks only (no entity text), for picker_report.py
   build_meta.json                     the inputs (with sha256) and the settings
 
+--candidates retriever: no DM; the LLM sees the retriever's own top K (the fused ranking file's list, as kept in the DM
+run's requests.jsonl), in retriever order, as the original RAG picker does (no reranked JSON). Its rows are named
+RETRIEVER, and the report's dm_* columns then describe the retriever. Use it to reproduce the RAG picker's result.
+
 A K above what a DM read (MedDecider-31B reads 10: K=20) is not built and reads N/A in the report. An entity the DM
 has no result for is left out of that DM's inputs and counted. A list shorter than K goes to the LLM whole and is
 counted. The entity text is the DM's own input (entity_text, with "(expanded: query_text)" when they differ).
@@ -41,6 +45,7 @@ from decision_eval import ORDERS, SOURCES, load_descriptions, parse_ks  # noqa: 
 from run_decision_model import model_view, parse_sources, rank_options, retriever_rankings  # noqa: E402
 
 DM_NAMES = tuple(lh_core.MODELS_INFO)
+RETRIEVER = "RETRIEVER"   # --candidates retriever: the row name in place of a DM
 NOTE_MODES = ("none", "first")   # none: no clinical note; first: the note's first --max-note-chars characters
 
 
@@ -98,7 +103,10 @@ def main():
     ap.add_argument("--dm-run", required=True, help="the DM run folder (requests.jsonl, predictions_<DM>.jsonl)")
     ap.add_argument("--out", required=True, help="the picker folder to create (or reuse, when built with the same settings)")
     ap.add_argument("--llm-model", required=True, help="the LLM's folder (written into the configs)")
-    ap.add_argument("--dms", type=parse_sources, required=True, metavar="'DREX MEDDECIDER31'")
+    ap.add_argument("--dms", type=parse_sources, default=None, metavar="'DREX MEDDECIDER31'",
+                    help="the DMs whose reranking the LLM sees (needed with --candidates dm)")
+    ap.add_argument("--candidates", default="dm", choices=("dm", "retriever"),
+                    help="dm: each DM's top K in DM order (default); retriever: the retriever's top K in its own order")
     ap.add_argument("--sources", type=parse_sources, default=None, help="default: all sources")
     ap.add_argument("--ks", type=parse_ks, default=parse_ks("3,5,10,20"), metavar="'3,5,10,20'",
                     help="how many of the DM's top codes the LLM sees (default 3,5,10,20)")
@@ -116,10 +124,17 @@ def main():
     args = ap.parse_args()
 
     dm_run, out = Path(args.dm_run).resolve(), Path(args.out).resolve()
-    dms = [d.upper() for d in args.dms]
-    bad = [d for d in dms if d not in DM_NAMES]
-    if bad:
-        sys.exit(f"STOPPED: unknown DM(s) {bad}; choose from {' '.join(DM_NAMES)}")
+    if args.candidates == "retriever":
+        if args.dms:
+            sys.exit("STOPPED: --candidates retriever uses no DM; leave out --dms")
+        dms = [RETRIEVER]
+    else:
+        if not args.dms:
+            sys.exit("STOPPED: --dms is needed (or --candidates retriever)")
+        dms = [d.upper() for d in args.dms]
+        bad = [d for d in dms if d not in DM_NAMES]
+        if bad:
+            sys.exit(f"STOPPED: unknown DM(s) {bad}; choose from {' '.join(DM_NAMES)}")
     sources = list(args.sources) if args.sources else list(SOURCES)
     bad = [s for s in sources if s not in SOURCES]
     if bad:
@@ -150,7 +165,7 @@ def main():
     reqs = [json.loads(line) for line in open(req_path, encoding="utf8")]
     requests_sha = sha256(req_path)
     preds, pred_sha = {}, {}
-    for dm in dms:
+    for dm in (d for d in dms if d != RETRIEVER):
         path = dm_run / f"predictions_{dm}.jsonl"
         meta = path.with_name(path.name + ".meta.json")
         if not path.is_file() or not meta.is_file():
@@ -187,6 +202,8 @@ def main():
                 "dms": dms, "sources": sources, "ks": args.ks, "order": args.order, "format": args.format,
                 "note": args.note, "llm_model": str(Path(args.llm_model).resolve()), "stop_tokens": args.stop_tokens,
                 "max_new_tokens": args.max_new_tokens, "max_note_chars": args.max_note_chars, "limit": args.limit}
+    if args.candidates != "dm":   # added only when set, so folders built before this keep matching
+        settings["candidates"] = args.candidates
     if args.note != "none":   # added only with notes, so no-note folders built before this keep matching
         settings.update(notes=str(Path(args.notes).resolve()), notes_sha256=sha256(args.notes), note_link_from=link_from)
     meta_path = out / "build_meta.json"
@@ -204,25 +221,29 @@ def main():
     counts, truth, files = [], [], {}
     for source in sources:
         for dm in dms:
-            limit = lh_core.MODELS_INFO[dm]["max_options"]
+            limit = lh_core.MODELS_INFO[dm]["max_options"] if dm != RETRIEVER else longest
             ks = [k for k in args.ks if k <= limit]
             na = [k for k in args.ks if k > limit]
             entities, skipped, short = [], 0, {k: 0 for k in ks}
             for r in reqs:
                 if r["source"] != source or r["order"] != args.order or r["entity_id"] not in keep:
                     continue
-                p = preds[dm].get(r["request_id"])
-                if p is None:
-                    skipped += 1
-                    continue
-                v = model_view(r, limit, rankings) if r["n_options"] > limit else r   # the question the DM read
-                shown = list(v["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
-                if p.get("shown_codes", v["codes"]) != v["codes"] or set(p["probabilities"]) != set(shown):
-                    sys.exit(f"STOPPED: {r['request_id']}: the DM's codes differ from the ones rebuilt now; report it as a bug")
-                rank = rank_options(shown, p["probabilities"])
-                dm_order = sorted(shown, key=rank.get)
-                read = set(shown)
-                retr_order = [c for c in rankings[(r["entity_id"], source)] if c in read]   # retriever order of the same codes
+                if dm == RETRIEVER:   # the retriever's whole list in its own order; the LLM sees its first K
+                    retr_order = dm_order = list(rankings[(r["entity_id"], source)])
+                    rank = {c: i for i, c in enumerate(dm_order, 1)}
+                else:
+                    p = preds[dm].get(r["request_id"])
+                    if p is None:
+                        skipped += 1
+                        continue
+                    v = model_view(r, limit, rankings) if r["n_options"] > limit else r   # the question the DM read
+                    shown = list(v["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
+                    if p.get("shown_codes", v["codes"]) != v["codes"] or set(p["probabilities"]) != set(shown):
+                        sys.exit(f"STOPPED: {r['request_id']}: the DM's codes differ from the ones rebuilt now; report it as a bug")
+                    rank = rank_options(shown, p["probabilities"])
+                    dm_order = sorted(shown, key=rank.get)
+                    read = set(shown)
+                    retr_order = [c for c in rankings[(r["entity_id"], source)] if c in read]   # retriever order of the same codes
                 for k in ks:
                     short[k] += len(dm_order) < k
                 gt = r["gt_code"]
@@ -260,9 +281,11 @@ def main():
                 doc = {"code_descriptions": {c: desc[c] for e in entities for c in e["dm_order"]},
                        "patient_notes": list(by_note.values())}
                 files[f"native/{name}.input.json"] = json.dumps(doc, ensure_ascii=False, indent=1)
-                files[f"native/{name}.reranked.json"] = json.dumps(
-                    {e["r"]["entity_id"]: e["dm_order"] for e in entities}, ensure_ascii=False, indent=1)
-                picker_paths = {"input": f"../native/{name}.input.json", "reranked": f"../native/{name}.reranked.json"}
+                picker_paths = {"input": f"../native/{name}.input.json"}
+                if dm != RETRIEVER:   # the retriever run is the original pipeline: no reranked JSON
+                    files[f"native/{name}.reranked.json"] = json.dumps(
+                        {e["r"]["entity_id"]: e["dm_order"] for e in entities}, ensure_ascii=False, indent=1)
+                    picker_paths["reranked"] = f"../native/{name}.reranked.json"
             else:
                 files[f"requests/{name}.jsonl"] = "".join(json.dumps({
                     "entity_id": e["r"]["entity_id"], "source": source, "dm": dm, "note_id": e["note_id"],
@@ -293,7 +316,9 @@ def main():
     lh_core.write_json_atomic(meta_path, {"settings": settings, "counts": counts, "longest_dm_list": longest,
                                           "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
 
-    print(f"built {out} ({args.format} format, note: {args.note}, DM order from the {args.order} requests)")
+    print(f"built {out} ({args.format} format, note: {args.note}, " + (
+        "candidates: the retriever's own top K, retriever order)" if args.candidates == "retriever"
+        else f"DM order from the {args.order} requests)"))
     print(f"  {'source':<16} {'DM':<13} {'entities':>8} {'no DM result':>12}  K built (N/A)       short lists (< K)")
     for c in counts:
         print(f"  {c['source']:<16} {c['dm']:<13} {c['entities']:>8} {c['skipped_no_dm_result']:>12}  "

@@ -99,6 +99,9 @@ def main():
     note = "none" if s["note"] == "none" else f"the first {s['max_note_chars']} characters of each entity's note"
     notes = [f"DM run: {s['dm_run']} (DM order from the {s['order']} requests); format {s['format']}; note: {note}; "
              f"stop tokens: {s['stop_tokens']}" + (f"; SMOKE: first {s['limit']} entities only" if s["limit"] else "")]
+    if s.get("candidates") == "retriever":
+        notes.append("Candidates: the retriever's own top K in retriever order (no DM). In the RETRIEVER rows the dm_* "
+                     "columns describe the retriever: dm_hit@K = the retriever's recall@K, dm_top1 = its first code")
     if s["note"] != "none":
         notes.append("Mention past the note cut (the LLM sees the note without it): " + ", ".join(
             f"{c['source']}/{c['dm']}: {c.get('mention_past_cut', 0)}/{c['entities']}" for c in meta["counts"]))

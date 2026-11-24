@@ -386,7 +386,16 @@ Folders are named `<dm run>__llm_note4000`.
     bash picker_run.sh --dm-run real_whole_list_desc --dms "DREX MEDDECIDER31" --sources rrf_fsn+syn --ks 3 \
          --note first --limit 5 --batch-size 8 --foreground                      # smoke
 
-`--stop-tokens tokenizer_eos` gives the uploaded script's generation. There, Gemma does not stop at the end of its
+**Retriever baseline (no DM).** `--candidates retriever` gives the LLM the retriever's own top K from the fused ranking
+file, in retriever order, with no reranked JSON: the original RAG picker's input. Leave out `--dms`. Its rows are named
+RETRIEVER (folder `<dm run>__llm_retriever...`). Use it to reproduce the RAG picker's result with the same entities,
+entity text and note. `picker_compare.py --ours <our predictions .jsonl> --original <run_rag_picker.py output>` matches
+two prediction files on (note_id, start, end) and counts same reference code, entity text, candidates and pick, with
+both top-1s (counts and codes only).
+
+    bash picker_run.sh --dm-run real_whole_list_desc --candidates retriever --sources rrf_csv+fsn+syn --ks 20 --note first --batch-size 8
+
+`--stop-tokens tokenizer_eos` gives the uploaded script's generation (folder suffix `_tokeos`). There, Gemma does not stop at the end of its
 turn, and its last answer is scored. Picker folders hold entity text (and, with `--note`, the notes), so keep them on the server.
 
 ## Data handling

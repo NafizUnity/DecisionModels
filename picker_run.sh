@@ -11,6 +11,7 @@
 #   options: --dm-run NAME (a folder under DM_RESULTS_DIR, or a full path; required)  --dms "DREX MEDDECIDER31"
 #            --sources "A B" (default: all)  --ks "3,5,10,20"  --format native|requests (default native)
 #            --note none|first (default none)  --max-note-chars N (default 4000)
+#            --candidates retriever (no DM: the retriever's own top K in its order, as the original RAG picker)
 #            --stop-tokens tokenizer_eos (the original script's generation; default: the model's own end tokens)
 #            --batch-size N (entities per generate call; default 1)
 #            --limit N (first N entities: smoke test)  --name NAME (picker folder under PICKER_RESULTS_DIR, or a full path)
@@ -23,11 +24,12 @@
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$HERE/picker.conf"; DM_RUN=""; DMS="DREX MEDDECIDER31"; SOURCES_ARG=""; KS_ARG="3,5,10,20"; FORMAT="native"
-NOTE="none"; NOTE_CHARS=4000; STOP_TOKENS="generation_config"; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
+NOTE="none"; NOTE_CHARS=4000; CANDIDATES="dm"; DMS_SET=0; STOP_TOKENS="generation_config"; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dm-run) DM_RUN="${2:?--dm-run needs a folder}"; shift 2 ;;
-        --dms) DMS="${2:?--dms needs a list}"; shift 2 ;;
+        --dms) DMS="${2:?--dms needs a list}"; DMS_SET=1; shift 2 ;;
+        --candidates) CANDIDATES="${2:?--candidates needs dm or retriever}"; shift 2 ;;
         --sources) SOURCES_ARG="${2:?--sources needs a list}"; shift 2 ;;
         --ks) KS_ARG="${2:?--ks needs a list such as 3,5,10,20}"; shift 2 ;;
         --format) FORMAT="${2:?--format needs native or requests}"; shift 2 ;;
@@ -42,7 +44,7 @@ while [ $# -gt 0 ]; do
         --foreground) FOREGROUND=1; shift ;;
         --report-only) REPORT_ONLY=1; shift ;;
         --validate-only) VALIDATE_ONLY=1; shift ;;
-        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -60,6 +62,11 @@ for v in LLM_MODEL LLM_ENV DM_RESULTS_DIR PICKER_RESULTS_DIR; do
 done
 [ -f "$LLM_MODEL/config.json" ] || stop "LLM_MODEL $LLM_MODEL has no config.json (point it at the model folder, e.g. MODELS/gemma-4-31b-it)"
 [[ "$NOTE" =~ ^(none|first)$ ]] || stop "--note must be none or first"
+[[ "$CANDIDATES" =~ ^(dm|retriever)$ ]] || stop "--candidates must be dm or retriever"
+if [ "$CANDIDATES" = retriever ]; then
+    [ "$DMS_SET" = 0 ] || stop "--candidates retriever uses no DM; leave out --dms"
+    DMS="(none: retriever top K)"
+fi
 [[ "$NOTE_CHARS" =~ ^[0-9]+$ && "$NOTE_CHARS" -ge 1 ]] || stop "--max-note-chars must be a whole number of 1 or more"
 if [ "$NOTE" != none ]; then
     placeholder "${NOTES:-}" && stop "--note $NOTE needs NOTES in $CONF (notes.jsonl with note_id and note_text)"
@@ -93,7 +100,7 @@ cd "$HERE"
 case "$DM_RUN" in /*) DM_DIR="$DM_RUN" ;; *) DM_DIR="$DM_RESULTS_DIR/$DM_RUN" ;; esac
 [ -f "$DM_DIR/requests.jsonl" ] || stop "$DM_DIR has no requests.jsonl (is --dm-run a DM run folder?)"
 if [ -z "$NAME" ]; then
-    NAME="$(basename "$DM_DIR")__llm$([ "$NOTE" = first ] && echo "_note$NOTE_CHARS" || true)$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
+    NAME="$(basename "$DM_DIR")__llm$([ "$CANDIDATES" = retriever ] && echo _retriever || true)$([ "$STOP_TOKENS" = tokenizer_eos ] && echo _tokeos || true)$([ "$NOTE" = first ] && echo "_note$NOTE_CHARS" || true)$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
 fi
 case "$NAME" in /*) OUT="$NAME" ;; *) OUT="$PICKER_RESULTS_DIR/$NAME" ;; esac
 
@@ -104,9 +111,10 @@ fi
 
 # ---- stage 1 (this terminal): build and validate -----------------------------------------------------------------------
 say "DM run $DM_DIR | DMs $DMS | sources ${SOURCES_ARG:-all} | K $KS_ARG | format $FORMAT | note: $([ "$NOTE" = none ] && echo none || echo "first $NOTE_CHARS chars") | GPU $GPU"
-build=("$PY" picker_build.py --dm-run "$DM_DIR" --out "$OUT" --llm-model "$LLM_MODEL" --dms "$DMS" --ks "$KS_ARG"
+build=("$PY" picker_build.py --dm-run "$DM_DIR" --out "$OUT" --llm-model "$LLM_MODEL" --candidates "$CANDIDATES" --ks "$KS_ARG"
        --format "$FORMAT" --stop-tokens "$STOP_TOKENS" --note "$NOTE" --max-note-chars "$NOTE_CHARS")
 [ "$NOTE" != none ] && build+=(--notes "$NOTES")
+[ "$CANDIDATES" = dm ] && build+=(--dms "$DMS")
 [ -n "$SOURCES_ARG" ] && build+=(--sources "$SOURCES_ARG")
 [ -n "$LIMIT" ] && build+=(--limit "$LIMIT")
 "${build[@]}" || stop "build failed (see above)"
