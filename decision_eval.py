@@ -38,6 +38,9 @@ ORDERS = ("original", "shuf1")
 SOURCES = ("csv_dense", "snomed_fsn", "snomed_syn", "rrf_csv+fsn", "rrf_csv+syn", "rrf_fsn+syn", "rrf_csv+fsn+syn")
 NAMES = {m: info["label"] for m, info in lh_core.MODELS_INFO.items()}
 QUESTION = "Which ICD-10-CA code best matches the diagnosis described above?"
+# Optional per-entity link to the clinical note (fused ranking files): copied into every request and prediction row so
+# the LLM picker can find the note. The models never see it (it is outside "record").
+NOTE_KEYS = ("note_id", "start", "end")
 
 
 def cutoffs(top, longest):
@@ -103,6 +106,16 @@ def validate(data):
             problems.append(f"{where}: empty entity_text")
         if d.get("query_text") is not None and not isinstance(d["query_text"], str):
             problems.append(f"{where}: query_text is not a string")
+        # optional note link (kept in requests.jsonl for the LLM picker with notes): all of note_id/start/end or none
+        has = [k for k in NOTE_KEYS if k in d]
+        if has and len(has) < len(NOTE_KEYS):
+            problems.append(f"{where}: has {has} but not {[k for k in NOTE_KEYS if k not in d]}")
+        elif has:
+            if not isinstance(d["note_id"], (str, int)) or str(d["note_id"]) == "":
+                problems.append(f"{where}: note_id must be a non-empty string or number")
+            if not all(isinstance(d[k], int) and not isinstance(d[k], bool) for k in ("start", "end")) \
+                    or not 0 <= d["start"] <= d["end"]:
+                problems.append(f"{where}: start/end must be whole numbers with 0 <= start <= end")
         gts = d["ground_truth_codes"]
         if not isinstance(gts, list) or len(set(map(str, gts))) != 1 or not all(isinstance(c, str) and c.strip() == c and c for c in gts):
             problems.append(f"{where}: needs exactly one ground-truth code (a non-empty string without spaces), found {gts!r}")
@@ -122,6 +135,9 @@ def validate(data):
                 problems.append(f"{where}: {source} has {len(ranking)} code; a choice needs at least 2")
             elif len(ranking) > MAX_OPTIONS:   # cap_rankings() runs first; this guards a caller that skips it
                 problems.append(f"{where}: {source} has {len(ranking)} codes; the models take at most {MAX_OPTIONS}")
+    with_note = sum(isinstance(d, dict) and "note_id" in d for d in data)
+    if 0 < with_note < len(data):
+        problems.append(f"note_id/start/end are on {with_note} of {len(data)} entities: give them on all or none")
     return problems
 
 
@@ -178,6 +194,7 @@ def cmd_build(args):
         gt = d["ground_truth_codes"][0]
         eid = str(d["entity_id"])
         state = merged_context(d["entity_text"], d.get("query_text") or "")
+        link = {"note_id": str(d["note_id"]), "start": d["start"], "end": d["end"]} if "note_id" in d else {}
         for source in SOURCES:
             ranking = list(d["rankings"][source])[:top]                  # top=None keeps the whole ranking
             rank = ranking.index(gt) + 1 if gt in ranking else None      # the retriever's rank of the reference code
@@ -186,8 +203,9 @@ def cmd_build(args):
             for order in ORDERS:
                 # the shuffle seed keeps "all" for whole lists, so those runs reproduce the earlier option orders
                 codes = order_for(ranking, order, f"{eid}|{source}", "all" if top is None else f"top{top}")
-                rows.append({"request_id": f"{eid}|{source}|{order}", "entity_id": eid, "source": source, "order": order,
-                             "n_options": len(codes), "gt_code": gt, "answerable": rank is not None,
+                rows.append({"request_id": f"{eid}|{source}|{order}", "entity_id": eid, **link, "source": source,
+                             "order": order, "n_options": len(codes), "gt_code": gt,
+                             "ground_truth_codes": list(d["ground_truth_codes"]), "answerable": rank is not None,
                              "gt_letter": gt if rank is not None else None,     # the option key of the reference code
                              "gt_position": codes.index(gt) + 1 if rank is not None else None,
                              "retriever_rank": rank, "rank1_correct": rank == 1, "codes": codes, "option_text": option_text,
@@ -224,7 +242,8 @@ def cmd_build(args):
         "src": str(Path(args.src).resolve()), "src_sha256": sha(args.src), "option_text": option_text,
         "descriptions": str(Path(args.descriptions).resolve()) if desc else None,
         "descriptions_sha256": sha(args.descriptions) if desc else None, "top": top, "requests": len(rows),
-        "max_options_read": MAX_OPTIONS, "lists_cut_to_max": n_cut, "longest_list_in_src": longest})
+        "max_options_read": MAX_OPTIONS, "lists_cut_to_max": n_cut, "longest_list_in_src": longest,
+        "note_link": "note_id" in data[0]})
     print(f"options: {'code + ' + option_text if desc else 'bare codes'}; {'whole lists' if top is None else f'top {top} per list'}")
     print(f"wrote {len(rows)} requests for {len(data)} entities ({sum(r['n_options'] for r in rows)} options in all) -> {out/'requests.jsonl'}")
 

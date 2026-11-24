@@ -96,8 +96,16 @@ def main():
     widths = [max(len(t[i]) for t in table) for i in range(len(head))]
     text = ["  ".join(c.ljust(w) for c, w in zip(t, widths)) for t in table]
     text.insert(1, "  ".join("-" * w for w in widths))
-    notes = [f"DM run: {s['dm_run']} (DM order from the {s['order']} requests); format {s['format']}; note: {s['note']}; "
+    note = "none" if s["note"] == "none" else f"the first {s['max_note_chars']} characters of each entity's note"
+    notes = [f"DM run: {s['dm_run']} (DM order from the {s['order']} requests); format {s['format']}; note: {note}; "
              f"stop tokens: {s['stop_tokens']}" + (f"; SMOKE: first {s['limit']} entities only" if s["limit"] else "")]
+    if s["note"] != "none":
+        notes.append("Mention past the note cut (the LLM sees the note without it): " + ", ".join(
+            f"{c['source']}/{c['dm']}: {c.get('mention_past_cut', 0)}/{c['entities']}" for c in meta["counts"]))
+        bad = [c for c in meta["counts"] if c.get("span_mismatch")]
+        if bad:
+            notes.append("WARNING: note text at start:end differs from the entity text: " + ", ".join(
+                f"{c['source']}/{c['dm']}: {c['span_mismatch']}" for c in bad) + " (check the note ids)")
     skipped = [c for c in meta["counts"] if c["skipped_no_dm_result"]]
     if skipped:
         notes.append("Left out (no DM result): " + ", ".join(f"{c['source']}/{c['dm']}: {c['skipped_no_dm_result']}" for c in skipped))

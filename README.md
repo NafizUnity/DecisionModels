@@ -208,6 +208,11 @@ share of lists holding the reference code, and stops if no reference code appear
 mismatch; `inspect_rankings.py` shows the formats). It also refuses a run folder that already has requests or predictions.
 One entity gives 14 requests (7 sources x 2 orders): 25,732 per model for 1,838 entities.
 
+If the entities have `note_id`, `start` and `end` (the fused ranking files do), the build copies them, with
+`ground_truth_codes`, into every request, and the workers copy them into every prediction row. The models never see
+them. They let the LLM picker find each entity's clinical note (step 10). The fields must be on all entities or on
+none. A run built before this lacks them; the picker then looks them up in the DM's input file (see step 10).
+
 ## 4. Smoke test (about 260 requests per model)
 
     for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN --weights-dir $MODELS --stride 100; done
@@ -345,7 +350,8 @@ most equal the retriever's hit@K. Choose K on the command line; use one folder p
 
 The decision model (DM) reranks each retriever list. The LLM picker (Gemma 4 31B, `llm_picker.py`, the RealData copy
 of `GeminiOps/run_rag_picker.py`) then sees the DM's top K codes with their descriptions and picks one. It sees the same
-entity text as the DM and, for now, no clinical note. It needs a finished DM run built with `--desc`.
+entity text as the DM. By default it sees no clinical note; with `--note first` it also sees the note (below). It
+needs a finished DM run built with `--desc`.
 
     cp picker.conf.example picker.conf      # once: LLM_MODEL, LLM_ENV, DM_RESULTS_DIR, PICKER_RESULTS_DIR, CONDA, GPU
     bash picker_run.sh --dm-run real_whole_list_desc --dms DREX --sources rrf_fsn+syn --ks 3 --limit 2 --foreground   # smoke
@@ -368,8 +374,20 @@ The report is saved as `report_<UTC time>.md/.csv`. `--report-only` rebuilds it,
 `--batch-size N` answers N entities per generate call. With 6 entities it was 3–4× faster.
 bf16 results depend on the batch shape, so a borderline pick can differ between batch sizes. Use one batch size for
 every run you compare. Each prediction file's `.meta.json` records the size, and the report warns when sizes are mixed.
+**With the clinical note.** `--note first` shows the first 4000 characters of each entity's note
+(`--max-note-chars N` to change), as the original picker does, in its original prompt with the note section. Set
+`NOTES` in `picker.conf` to a notes.jsonl with `note_id` and `note_text`. The note link (`note_id`, `start`, `end`) comes
+from `requests.jsonl` when the DM run has it. Otherwise it comes from the DM's input file, the one named in the DM
+`build_meta.json`; the build stops if that file has changed since (sha256). It also stops if an entity has no note link
+or its note is missing. The build and the report count mentions that end past the cut (the LLM sees the note without
+the mention), and warn when the note text at `start:end` does not match the entity text (a sign of wrong note ids).
+Folders are named `<dm run>__llm_note4000`.
+
+    bash picker_run.sh --dm-run real_whole_list_desc --dms "DREX MEDDECIDER31" --sources rrf_fsn+syn --ks 3 \
+         --note first --limit 5 --batch-size 8 --foreground                      # smoke
+
 `--stop-tokens tokenizer_eos` gives the uploaded script's generation. There, Gemma does not stop at the end of its
-turn, and its last answer is scored. Picker folders hold entity text, so keep them on the server.
+turn, and its last answer is scored. Picker folders hold entity text (and, with `--note`, the notes), so keep them on the server.
 
 ## Data handling
 

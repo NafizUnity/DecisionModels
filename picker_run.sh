@@ -5,10 +5,12 @@
 #        --sources "rrf_csv+fsn rrf_fsn+syn rrf_csv+fsn+syn" --ks "3,5,10,20"
 #   bash picker_run.sh --dm-run real_whole_list_desc --dms DREX --sources rrf_fsn+syn --ks 3 --limit 2   # smoke test
 #
-#   The LLM sees each DM's top K codes (sorted by the DM's probabilities), without the clinical note. A K above what a
-#   DM read (MedDecider-31B: 10) reads N/A. Every source x DM x K is one picker config; all run in one model load.
+#   The LLM sees each DM's top K codes (sorted by the DM's probabilities); with --note first also the first
+#   --max-note-chars (default 4000) characters of the entity's clinical note (NOTES in picker.conf), as the original
+#   picker. A K above what a DM read (MedDecider-31B: 10) reads N/A. Every source x DM x K is one picker config.
 #   options: --dm-run NAME (a folder under DM_RESULTS_DIR, or a full path; required)  --dms "DREX MEDDECIDER31"
 #            --sources "A B" (default: all)  --ks "3,5,10,20"  --format native|requests (default native)
+#            --note none|first (default none)  --max-note-chars N (default 4000)
 #            --stop-tokens tokenizer_eos (the original script's generation; default: the model's own end tokens)
 #            --batch-size N (entities per generate call; default 1)
 #            --limit N (first N entities: smoke test)  --name NAME (picker folder under PICKER_RESULTS_DIR, or a full path)
@@ -21,7 +23,7 @@
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$HERE/picker.conf"; DM_RUN=""; DMS="DREX MEDDECIDER31"; SOURCES_ARG=""; KS_ARG="3,5,10,20"; FORMAT="native"
-STOP_TOKENS="generation_config"; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
+NOTE="none"; NOTE_CHARS=4000; STOP_TOKENS="generation_config"; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dm-run) DM_RUN="${2:?--dm-run needs a folder}"; shift 2 ;;
@@ -29,6 +31,8 @@ while [ $# -gt 0 ]; do
         --sources) SOURCES_ARG="${2:?--sources needs a list}"; shift 2 ;;
         --ks) KS_ARG="${2:?--ks needs a list such as 3,5,10,20}"; shift 2 ;;
         --format) FORMAT="${2:?--format needs native or requests}"; shift 2 ;;
+        --note) NOTE="${2:?--note needs none or first}"; shift 2 ;;
+        --max-note-chars) NOTE_CHARS="${2:?--max-note-chars needs a number}"; shift 2 ;;
         --stop-tokens) STOP_TOKENS="${2:?--stop-tokens needs generation_config or tokenizer_eos}"; shift 2 ;;
         --limit) LIMIT="${2:?--limit needs a number}"; shift 2 ;;
         --batch-size) BATCH="${2:?--batch-size needs a number}"; shift 2 ;;
@@ -38,7 +42,7 @@ while [ $# -gt 0 ]; do
         --foreground) FOREGROUND=1; shift ;;
         --report-only) REPORT_ONLY=1; shift ;;
         --validate-only) VALIDATE_ONLY=1; shift ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -50,8 +54,17 @@ placeholder() { [[ -z "$1" || "$1" == /path/to/* ]]; }
 # shellcheck disable=SC1090
 source "$CONF"
 for v in LLM_MODEL LLM_ENV DM_RESULTS_DIR PICKER_RESULTS_DIR; do
-    placeholder "${!v:-}" && stop "$v is not set in $CONF"
+    [ -n "${!v:-}" ] || stop "$v is empty in $CONF"
+    placeholder "${!v}" && stop "$v in $CONF still has the example value (${!v}); set the real path"
+    [[ "${!v}" =~ ^[[:space:]]|[[:space:]]$ ]] && stop "$v in $CONF starts or ends with a space: \"${!v}\""
 done
+[ -f "$LLM_MODEL/config.json" ] || stop "LLM_MODEL $LLM_MODEL has no config.json (point it at the model folder, e.g. MODELS/gemma-4-31b-it)"
+[[ "$NOTE" =~ ^(none|first)$ ]] || stop "--note must be none or first"
+[[ "$NOTE_CHARS" =~ ^[0-9]+$ && "$NOTE_CHARS" -ge 1 ]] || stop "--max-note-chars must be a whole number of 1 or more"
+if [ "$NOTE" != none ]; then
+    placeholder "${NOTES:-}" && stop "--note $NOTE needs NOTES in $CONF (notes.jsonl with note_id and note_text)"
+    [ -f "$NOTES" ] || stop "NOTES $NOTES not found"
+fi
 GPU="${GPU_ARG:-${GPU:-0}}"
 [ -n "$DM_RUN" ] || stop "--dm-run is required (a DM run folder under $DM_RESULTS_DIR)"
 if [ -n "$LIMIT" ] && ! [[ "$LIMIT" =~ ^[0-9]+$ && "$LIMIT" -ge 1 ]]; then stop "--limit must be a whole number of 1 or more"; fi
@@ -80,7 +93,7 @@ cd "$HERE"
 case "$DM_RUN" in /*) DM_DIR="$DM_RUN" ;; *) DM_DIR="$DM_RESULTS_DIR/$DM_RUN" ;; esac
 [ -f "$DM_DIR/requests.jsonl" ] || stop "$DM_DIR has no requests.jsonl (is --dm-run a DM run folder?)"
 if [ -z "$NAME" ]; then
-    NAME="$(basename "$DM_DIR")__llm$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
+    NAME="$(basename "$DM_DIR")__llm$([ "$NOTE" = first ] && echo "_note$NOTE_CHARS" || true)$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
 fi
 case "$NAME" in /*) OUT="$NAME" ;; *) OUT="$PICKER_RESULTS_DIR/$NAME" ;; esac
 
@@ -90,9 +103,10 @@ if [ "$REPORT_ONLY" = 1 ]; then
 fi
 
 # ---- stage 1 (this terminal): build and validate -----------------------------------------------------------------------
-say "DM run $DM_DIR | DMs $DMS | sources ${SOURCES_ARG:-all} | K $KS_ARG | format $FORMAT | no clinical note | GPU $GPU"
+say "DM run $DM_DIR | DMs $DMS | sources ${SOURCES_ARG:-all} | K $KS_ARG | format $FORMAT | note: $([ "$NOTE" = none ] && echo none || echo "first $NOTE_CHARS chars") | GPU $GPU"
 build=("$PY" picker_build.py --dm-run "$DM_DIR" --out "$OUT" --llm-model "$LLM_MODEL" --dms "$DMS" --ks "$KS_ARG"
-       --format "$FORMAT" --stop-tokens "$STOP_TOKENS")
+       --format "$FORMAT" --stop-tokens "$STOP_TOKENS" --note "$NOTE" --max-note-chars "$NOTE_CHARS")
+[ "$NOTE" != none ] && build+=(--notes "$NOTES")
 [ -n "$SOURCES_ARG" ] && build+=(--sources "$SOURCES_ARG")
 [ -n "$LIMIT" ] && build+=(--limit "$LIMIT")
 "${build[@]}" || stop "build failed (see above)"

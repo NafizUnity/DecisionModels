@@ -18,7 +18,14 @@ retriever's list), sorts them high to low (ties: the earlier code in the shown o
 A K above what a DM read (MedDecider-31B reads 10: K=20) is not built and reads N/A in the report. An entity the DM
 has no result for is left out of that DM's inputs and counted. A list shorter than K goes to the LLM whole and is
 counted. The entity text is the DM's own input (entity_text, with "(expanded: query_text)" when they differ).
-Output folders hold entity text: keep them on the server, like the DM run folders. Standard library only.
+
+Clinical note (--note first --notes notes.jsonl): the LLM also sees the first --max-note-chars characters of the
+entity's note, as the original picker does (the original prompt with its note section). Each entity's note_id, start
+and end come from requests.jsonl (DM runs built with them), else from the DM's input file (the fused ranking file in
+the DM build_meta.json, checked by sha256). notes.jsonl lines hold note_id and note_text. It stops if an entity has no
+note_id or its note is missing. It counts mentions that lie past the cut (the LLM does not see them in the note) and
+mentions whose note text at start:end does not match the entity text.
+Output folders hold entity text and notes: keep them on the server, like the DM run folders. Standard library only.
 """
 import argparse
 import hashlib
@@ -34,11 +41,52 @@ from decision_eval import ORDERS, SOURCES, load_descriptions, parse_ks  # noqa: 
 from run_decision_model import model_view, parse_sources, rank_options, retriever_rankings  # noqa: E402
 
 DM_NAMES = tuple(lh_core.MODELS_INFO)
-NOTE_MODES = ("none",)   # "none": no clinical note (the only mode the DM data supports so far)
+NOTE_MODES = ("none", "first")   # none: no clinical note; first: the note's first --max-note-chars characters
 
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def squash(text):
+    return " ".join((text or "").lower().split())
+
+
+def note_links(reqs, build):
+    """entity_id -> (note_id, start, end), and where it came from: requests.jsonl when the DM build kept the note link,
+    else the DM's input file (sha256-checked against the DM build)."""
+    if all("note_id" in r for r in reqs):
+        return {r["entity_id"]: (r["note_id"], r["start"], r["end"]) for r in reqs}, "requests.jsonl"
+    src = Path(build.get("src") or "")
+    if not src.is_file():
+        sys.exit(f"STOPPED: requests.jsonl has no note_id and the DM's input file {src} is not found")
+    if sha256(src) != build.get("src_sha256"):
+        sys.exit(f"STOPPED: the DM's input file {src} has changed since the DM build (sha256 differs)")
+    data = json.load(open(src, encoding="utf8"))
+    lacking = [str(d.get("entity_id")) for d in data if not all(k in d for k in ("note_id", "start", "end"))]
+    if lacking:
+        sys.exit(f"STOPPED: {len(lacking)} entities in {src} have no note_id/start/end (first: {lacking[:5]})")
+    return {str(d["entity_id"]): (str(d["note_id"]), d["start"], d["end"]) for d in data}, f"DM input file {src}"
+
+
+def load_notes(path):
+    """note_id -> note_text. Stops on a bad line, a line without note_id/note_text, or a note_id given twice with
+    different text."""
+    notes = {}
+    with open(path, encoding="utf8") as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                sys.exit(f"STOPPED: {path} line {n} is not JSON")
+            nid, text = (rec.get("note_id"), rec.get("note_text")) if isinstance(rec, dict) else (None, None)
+            if nid in (None, "") or not isinstance(text, str):
+                sys.exit(f"STOPPED: {path} line {n} has no note_id or no note_text")
+            if notes.setdefault(str(nid), text) != text:
+                sys.exit(f"STOPPED: {path} has note_id {nid} twice with different text")
+    return notes
 
 
 def stem(source, dm):
@@ -57,7 +105,9 @@ def main():
     ap.add_argument("--order", default="original", choices=ORDERS,
                     help="which DM request to take the probabilities from (default original)")
     ap.add_argument("--format", default="native", choices=("native", "requests"))
-    ap.add_argument("--note", default="none", choices=NOTE_MODES, help="clinical note in the prompt (only none so far)")
+    ap.add_argument("--note", default="none", choices=NOTE_MODES,
+                    help="none: no clinical note (default); first: the note's first --max-note-chars characters")
+    ap.add_argument("--notes", default=None, help="notes.jsonl (note_id, note_text); needed with --note first")
     ap.add_argument("--stop-tokens", default="generation_config", choices=("generation_config", "tokenizer_eos"),
                     help="generation_config: stop at the model's end tokens; tokenizer_eos: the original script's behaviour")
     ap.add_argument("--max-new-tokens", type=int, default=512)
@@ -78,6 +128,12 @@ def main():
         sys.exit("STOPPED: --limit must be 1 or more")
     if not Path(args.llm_model).is_dir():
         sys.exit(f"STOPPED: --llm-model {args.llm_model} is not a folder")
+    if (args.note != "none") != bool(args.notes):
+        sys.exit("STOPPED: --note first needs --notes notes.jsonl, and --notes is only used with --note first")
+    if args.notes and not Path(args.notes).is_file():
+        sys.exit(f"STOPPED: --notes {args.notes} not found")
+    if args.max_note_chars < 1:
+        sys.exit("STOPPED: --max-note-chars must be 1 or more")
 
     # ---- the DM run: requests, descriptions, predictions (each checked against its record) ----
     req_path = dm_run / "requests.jsonl"
@@ -114,11 +170,25 @@ def main():
     longest = max(r["n_options"] for r in reqs)
     rankings = retriever_rankings(reqs)
 
+    # ---- the clinical notes (--note first): entity -> note_id/start/end -> note text ----
+    links, notes, link_from = {}, {}, None
+    if args.note != "none":
+        links, link_from = note_links(reqs, build)
+        notes = load_notes(args.notes)
+        unlinked = sorted(e for e in keep if e not in links)
+        if unlinked:
+            sys.exit(f"STOPPED: {len(unlinked)} entities have no note link (first: {unlinked[:5]})")
+        missing = sorted({links[e][0] for e in keep} - set(notes))
+        if missing:
+            sys.exit(f"STOPPED: {len(missing)} note_id(s) of these entities are not in {args.notes} (first: {missing[:5]})")
+
     settings = {"dm_run": str(dm_run), "requests_sha256": requests_sha, "predictions_sha256": pred_sha,
                 "descriptions": str(desc_path), "descriptions_sha256": build["descriptions_sha256"],
                 "dms": dms, "sources": sources, "ks": args.ks, "order": args.order, "format": args.format,
                 "note": args.note, "llm_model": str(Path(args.llm_model).resolve()), "stop_tokens": args.stop_tokens,
                 "max_new_tokens": args.max_new_tokens, "max_note_chars": args.max_note_chars, "limit": args.limit}
+    if args.note != "none":   # added only with notes, so no-note folders built before this keep matching
+        settings.update(notes=str(Path(args.notes).resolve()), notes_sha256=sha256(args.notes), note_link_from=link_from)
     meta_path = out / "build_meta.json"
     if meta_path.exists():
         old = json.loads(meta_path.read_text())
@@ -160,26 +230,44 @@ def main():
                 truth.append({"source": source, "dm": dm, "entity_id": r["entity_id"], "gt_code": gt,
                               "n_read": len(dm_order), "retriever_rank": r.get("retriever_rank"),
                               "dm_rank": rank.get(gt), "dm_top1": dm_order[0]})
-            counts.append({"source": source, "dm": dm, "entities": len(entities), "skipped_no_dm_result": skipped,
-                           "ks": ks, "ks_na": na, "short_lists": short})
+            # the note of each entity: without --note an empty note of its own (note_id = entity_id), as before
+            for e in entities:
+                eid = e["r"]["entity_id"]
+                nid, start, end = links[eid] if links else (eid, 0, 0)
+                e.update(note_id=nid, start=start, end=end, note_text=notes.get(nid, ""))
+            cnt = {"source": source, "dm": dm, "entities": len(entities), "skipped_no_dm_result": skipped,
+                   "ks": ks, "ks_na": na, "short_lists": short}
+            if notes:
+                cnt["notes"] = len({e["note_id"] for e in entities})
+                # the mention ends past the cut: the LLM does not see it in the note it is shown
+                cnt["mention_past_cut"] = sum(e["end"] > args.max_note_chars for e in entities)
+                # note_text[start:end] is not the entity text (the DM's input starts with the entity text)
+                cnt["span_mismatch"] = sum(not squash(e["r"]["record"]["state"]).startswith(
+                    squash(e["note_text"][e["start"]:e["end"]]) or "\0") for e in entities)
+            counts.append(cnt)
             if not entities:
                 continue
             pool = max(len(e["dm_order"]) for e in entities)
             name = stem(source, dm)
             if args.format == "native":
+                by_note = {}
+                for e in entities:   # one note per note_id holding its entities, as the picker's own input
+                    by_note.setdefault(e["note_id"], {"note_id": e["note_id"], "note_text": e["note_text"],
+                                                      "entities": []})["entities"].append({
+                        "entity_id": e["r"]["entity_id"], "entity_text": e["r"]["record"]["state"],
+                        "start": e["start"], "end": e["end"], "ground_truth_code": e["r"]["gt_code"],
+                        "rag_outputs": {f"top_{pool}": {"candidate_codes": e["retr_order"]}}})
                 doc = {"code_descriptions": {c: desc[c] for e in entities for c in e["dm_order"]},
-                       "patient_notes": [{"note_id": e["r"]["entity_id"], "note_text": "", "entities": [{
-                           "entity_id": e["r"]["entity_id"], "entity_text": e["r"]["record"]["state"],
-                           "start": 0, "end": 0, "ground_truth_code": e["r"]["gt_code"],
-                           "rag_outputs": {f"top_{pool}": {"candidate_codes": e["retr_order"]}}}]} for e in entities]}
+                       "patient_notes": list(by_note.values())}
                 files[f"native/{name}.input.json"] = json.dumps(doc, ensure_ascii=False, indent=1)
                 files[f"native/{name}.reranked.json"] = json.dumps(
                     {e["r"]["entity_id"]: e["dm_order"] for e in entities}, ensure_ascii=False, indent=1)
                 picker_paths = {"input": f"../native/{name}.input.json", "reranked": f"../native/{name}.reranked.json"}
             else:
                 files[f"requests/{name}.jsonl"] = "".join(json.dumps({
-                    "entity_id": e["r"]["entity_id"], "source": source, "dm": dm,
-                    "entity_text": e["r"]["record"]["state"], "note_text": "", "ground_truth_code": e["r"]["gt_code"],
+                    "entity_id": e["r"]["entity_id"], "source": source, "dm": dm, "note_id": e["note_id"],
+                    "start": e["start"], "end": e["end"], "entity_text": e["r"]["record"]["state"],
+                    "note_text": e["note_text"], "ground_truth_code": e["r"]["gt_code"],
                     "candidates": [{"code": c, "description": desc[c]} for c in e["dm_order"]]},
                     ensure_ascii=False) + "\n" for e in entities)
                 picker_paths = {"input": f"../requests/{name}.jsonl"}
@@ -211,6 +299,13 @@ def main():
         print(f"  {c['source']:<16} {c['dm']:<13} {c['entities']:>8} {c['skipped_no_dm_result']:>12}  "
               f"{','.join(map(str, c['ks'])) or '-':<10} {('(' + ','.join(map(str, c['ks_na'])) + ')') if c['ks_na'] else '':<8} "
               + " ".join(f"k{k}:{n}" for k, n in c["short_lists"].items()))
+    if notes:
+        print(f"  notes from {args.notes} (note link from {link_from}); the LLM sees each note's first "
+              f"{args.max_note_chars} characters")
+        for c in counts:
+            print(f"  {c['source']:<16} {c['dm']:<13} {c.get('notes', 0):>5} notes  mention past the cut: "
+                  f"{c.get('mention_past_cut', 0)}/{c['entities']}  span does not match the entity text: "
+                  f"{c.get('span_mismatch', 0)}")
     print(f"  {sum(1 for f in files if f.startswith('configs/'))} picker configs in {out / 'configs'}")
 
 

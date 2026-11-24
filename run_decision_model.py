@@ -366,7 +366,11 @@ def cmd_worker(args):
             v = model_view(r, limit, rankings) if rankings else r   # the question this model can read
             choices = list(v["record"]["questions"][lh_core.QUESTION_ID]["criteria"])
             t0 = time.perf_counter()
-            row = {"request_id": r["request_id"], "model": model}
+            # ids and the note link ride along (codes and numbers only, never text) so a prediction row can be joined to
+            # its entity and note without requests.jsonl; requests built before these fields existed simply lack them
+            row = {"request_id": r["request_id"], "model": model,
+                   **{k: r[k] for k in ("entity_id", "note_id", "start", "end", "source", "order", "ground_truth_codes")
+                      if k in r}}
             if v is not r:
                 row["shown_codes"] = v["codes"]   # cut to the model's limit; the report and export rebuild and check it
             failure = None

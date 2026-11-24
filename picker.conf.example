@@ -12,7 +12,11 @@ LLM_ENV="realdata-med"
 # Where the decision-model run folders are (realdata.conf RESULTS_DIR); picker_run.sh --dm-run names one of them.
 DM_RESULTS_DIR="/path/to/RealData/results"
 
-# Where picker folders go (one subfolder per build). They hold entity text: keep them on the server.
+# Clinical notes for picker_run.sh --note first: one JSON line per note with note_id and note_text (the note_id the
+# DM's fused ranking file gives each entity). Leave as is for runs without notes.
+NOTES="/path/to/notes.jsonl"
+
+# Where picker folders go (one subfolder per build). They hold entity text and notes: keep them on the server.
 PICKER_RESULTS_DIR="/path/to/RealData/picker_results"
 
 # The conda that holds LLM_ENV (realdata_setup.sh installs it as BASE/miniforge3/bin/conda). Empty = conda on PATH.

@@ -1203,16 +1203,19 @@ def prepare_inputs(document, pool_size, reranked=None):
 
 def prepare_requests(path, pool_size):
     """RealData: read picker_build.py --format requests (one JSON line per entity: entity_id, entity_text, note_text,
-    ground_truth_code, candidates [{code, description}] already in the order to show). Returns what prepare_inputs
-    returns; each entity is its own note (note_id = entity_id)."""
-    entities, notes, descriptions = [], {}, {}
+    ground_truth_code, candidates [{code, description}] already in the order to show; note_id, start, end when
+    given). Returns what prepare_inputs returns; a line without note_id is its own note (note_id = entity_id)."""
+    entities, notes, descriptions, seen = [], {}, {}, set()
     with open(path, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f if line.strip()]
     for row in rows:
         entity_id = row["entity_id"]
-        if entity_id in notes:
+        if entity_id in seen:
             raise ValueError(f"duplicate entity_id: {entity_id}")
-        notes[entity_id] = row.get("note_text") or ""
+        seen.add(entity_id)
+        note_id = row.get("note_id", entity_id)
+        if notes.setdefault(note_id, row.get("note_text") or "") != (row.get("note_text") or ""):
+            raise ValueError(f"note_id {note_id} has two different note texts")
         candidates = normalize_codes([c["code"] for c in row["candidates"]], entity_id)
         if not 1 <= len(candidates) <= pool_size:
             raise ValueError(f"{entity_id}: expected 1 to {pool_size} candidates, got {len(candidates)}")
@@ -1224,7 +1227,7 @@ def prepare_requests(path, pool_size):
                 raise ValueError(f"{code} has two different descriptions")
         entities.append({
             "entity_id": entity_id,
-            "note_id": entity_id,
+            "note_id": note_id,
             "entity_text": row["entity_text"],
             "start": row.get("start", 0),
             "end": row.get("end", 0),
