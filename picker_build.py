@@ -21,7 +21,9 @@ RETRIEVER, and the report's dm_* columns then describe the retriever. Use it to 
 
 A K above what a DM read (MedDecider-31B reads 10: K=20) is not built and reads N/A in the report. An entity the DM
 has no result for is left out of that DM's inputs and counted. A list shorter than K goes to the LLM whole and is
-counted. The entity text is the DM's own input (entity_text, with "(expanded: query_text)" when they differ).
+counted. The entity text is the DM's own input (entity_text, with "(expanded: query_text)" when they differ); with
+--entity-text mention it is entity_text alone, read from the DM's input file (the fused ranking file, sha256-checked),
+as the RAG pipeline's picker gives it.
 
 Clinical note (--note first --notes notes.jsonl): the LLM also sees the first --max-note-chars characters of the
 entity's note, as the original picker does (the original prompt with its note section). Each entity's note_id, start
@@ -57,17 +59,31 @@ def squash(text):
     return " ".join((text or "").lower().split())
 
 
+def dm_input(build, why):
+    """The DM's input file (the fused ranking JSON in the DM build_meta.json), sha256-checked against the DM build."""
+    src = Path(build.get("src") or "")
+    if not src.is_file():
+        sys.exit(f"STOPPED: {why}: the DM's input file {src} is not found")
+    if sha256(src) != build.get("src_sha256"):
+        sys.exit(f"STOPPED: the DM's input file {src} has changed since the DM build (sha256 differs)")
+    return src, json.load(open(src, encoding="utf8"))
+
+
+def mention_texts(build):
+    """entity_id -> entity_text as written in the DM's input file (the mention, without the query_text expansion)."""
+    src, data = dm_input(build, "--entity-text mention reads the mentions")
+    lacking = [str(d.get("entity_id")) for d in data if not isinstance(d.get("entity_text"), str)]
+    if lacking:
+        sys.exit(f"STOPPED: {len(lacking)} entities in {src} have no entity_text (first: {lacking[:5]})")
+    return {str(d["entity_id"]): d["entity_text"] for d in data}
+
+
 def note_links(reqs, build):
     """entity_id -> (note_id, start, end), and where it came from: requests.jsonl when the DM build kept the note link,
     else the DM's input file (sha256-checked against the DM build)."""
     if all("note_id" in r for r in reqs):
         return {r["entity_id"]: (r["note_id"], r["start"], r["end"]) for r in reqs}, "requests.jsonl"
-    src = Path(build.get("src") or "")
-    if not src.is_file():
-        sys.exit(f"STOPPED: requests.jsonl has no note_id and the DM's input file {src} is not found")
-    if sha256(src) != build.get("src_sha256"):
-        sys.exit(f"STOPPED: the DM's input file {src} has changed since the DM build (sha256 differs)")
-    data = json.load(open(src, encoding="utf8"))
+    src, data = dm_input(build, "requests.jsonl has no note_id")
     lacking = [str(d.get("entity_id")) for d in data if not all(k in d for k in ("note_id", "start", "end"))]
     if lacking:
         sys.exit(f"STOPPED: {len(lacking)} entities in {src} have no note_id/start/end (first: {lacking[:5]})")
@@ -118,6 +134,9 @@ def main():
     ap.add_argument("--notes", default=None, help="notes.jsonl (note_id, note_text); needed with --note first")
     ap.add_argument("--stop-tokens", default="generation_config", choices=("generation_config", "tokenizer_eos"),
                     help="generation_config: stop at the model's end tokens; tokenizer_eos: the original script's behaviour")
+    ap.add_argument("--entity-text", default="expanded", choices=("expanded", "mention"),
+                    help="expanded: the DM's input, entity_text (expanded: query_text) (default); mention: entity_text "
+                         "only, as written in the fused ranking file")
     ap.add_argument("--max-new-tokens", type=int, default=512)
     ap.add_argument("--max-note-chars", type=int, default=4000)
     ap.add_argument("--limit", type=int, default=None, help="only the first N entities (a smoke test)")
@@ -149,6 +168,8 @@ def main():
         sys.exit(f"STOPPED: --notes {args.notes} not found")
     if args.max_note_chars < 1:
         sys.exit("STOPPED: --max-note-chars must be 1 or more")
+    if args.max_new_tokens < 1:
+        sys.exit("STOPPED: --max-new-tokens must be 1 or more")
 
     # ---- the DM run: requests, descriptions, predictions (each checked against its record) ----
     req_path = dm_run / "requests.jsonl"
@@ -197,6 +218,23 @@ def main():
         if missing:
             sys.exit(f"STOPPED: {len(missing)} note_id(s) of these entities are not in {args.notes} (first: {missing[:5]})")
 
+    # ---- the entity text the LLM sees: the DM's input (default) or the mention alone ----
+    state = {r["entity_id"]: r["record"]["state"] for r in reqs if r["entity_id"] in keep}
+    if args.entity_text == "mention":
+        mentions = mention_texts(build)
+        absent = sorted(e for e in keep if e not in mentions)
+        if absent:
+            sys.exit(f"STOPPED: {len(absent)} entities are not in the DM's input file (first: {absent[:5]})")
+        # the DM's input starts with the mention; anything else means the file does not belong to this DM run
+        odd = sorted(e for e in keep if not squash(state[e]).startswith(squash(mentions[e]) or "\0"))
+        if odd:
+            sys.exit(f"STOPPED: {len(odd)} mentions in the DM's input file do not start the DM's entity text "
+                     f"(first: {odd[:5]}); report it as a bug")
+        shown_text = {e: mentions[e] for e in keep}
+    else:
+        shown_text = state
+    n_expanded = sum(shown_text[e] != state[e] for e in keep) if args.entity_text == "mention" else 0
+
     settings = {"dm_run": str(dm_run), "requests_sha256": requests_sha, "predictions_sha256": pred_sha,
                 "descriptions": str(desc_path), "descriptions_sha256": build["descriptions_sha256"],
                 "dms": dms, "sources": sources, "ks": args.ks, "order": args.order, "format": args.format,
@@ -204,6 +242,8 @@ def main():
                 "max_new_tokens": args.max_new_tokens, "max_note_chars": args.max_note_chars, "limit": args.limit}
     if args.candidates != "dm":   # added only when set, so folders built before this keep matching
         settings["candidates"] = args.candidates
+    if args.entity_text != "expanded":   # likewise
+        settings["entity_text"] = args.entity_text
     if args.note != "none":   # added only with notes, so no-note folders built before this keep matching
         settings.update(notes=str(Path(args.notes).resolve()), notes_sha256=sha256(args.notes), note_link_from=link_from)
     meta_path = out / "build_meta.json"
@@ -255,15 +295,17 @@ def main():
             for e in entities:
                 eid = e["r"]["entity_id"]
                 nid, start, end = links[eid] if links else (eid, 0, 0)
-                e.update(note_id=nid, start=start, end=end, note_text=notes.get(nid, ""))
+                e.update(note_id=nid, start=start, end=end, note_text=notes.get(nid, ""), text=shown_text[eid])
             cnt = {"source": source, "dm": dm, "entities": len(entities), "skipped_no_dm_result": skipped,
                    "ks": ks, "ks_na": na, "short_lists": short}
+            if args.entity_text == "mention":   # entities whose shown text lost an expansion
+                cnt["expansion_dropped"] = sum(e["text"] != state[e["r"]["entity_id"]] for e in entities)
             if notes:
                 cnt["notes"] = len({e["note_id"] for e in entities})
                 # the mention ends past the cut: the LLM does not see it in the note it is shown
                 cnt["mention_past_cut"] = sum(e["end"] > args.max_note_chars for e in entities)
                 # note_text[start:end] is not the entity text (the DM's input starts with the entity text)
-                cnt["span_mismatch"] = sum(not squash(e["r"]["record"]["state"]).startswith(
+                cnt["span_mismatch"] = sum(not squash(e["text"]).startswith(
                     squash(e["note_text"][e["start"]:e["end"]]) or "\0") for e in entities)
             counts.append(cnt)
             if not entities:
@@ -275,7 +317,7 @@ def main():
                 for e in entities:   # one note per note_id holding its entities, as the picker's own input
                     by_note.setdefault(e["note_id"], {"note_id": e["note_id"], "note_text": e["note_text"],
                                                       "entities": []})["entities"].append({
-                        "entity_id": e["r"]["entity_id"], "entity_text": e["r"]["record"]["state"],
+                        "entity_id": e["r"]["entity_id"], "entity_text": e["text"],
                         "start": e["start"], "end": e["end"], "ground_truth_code": e["r"]["gt_code"],
                         "rag_outputs": {f"top_{pool}": {"candidate_codes": e["retr_order"]}}})
                 doc = {"code_descriptions": {c: desc[c] for e in entities for c in e["dm_order"]},
@@ -289,7 +331,7 @@ def main():
             else:
                 files[f"requests/{name}.jsonl"] = "".join(json.dumps({
                     "entity_id": e["r"]["entity_id"], "source": source, "dm": dm, "note_id": e["note_id"],
-                    "start": e["start"], "end": e["end"], "entity_text": e["r"]["record"]["state"],
+                    "start": e["start"], "end": e["end"], "entity_text": e["text"],
                     "note_text": e["note_text"], "ground_truth_code": e["r"]["gt_code"],
                     "candidates": [{"code": c, "description": desc[c]} for c in e["dm_order"]]},
                     ensure_ascii=False) + "\n" for e in entities)
@@ -319,6 +361,9 @@ def main():
     print(f"built {out} ({args.format} format, note: {args.note}, " + (
         "candidates: the retriever's own top K, retriever order)" if args.candidates == "retriever"
         else f"DM order from the {args.order} requests)"))
+    print(f"  entity text: " + ("the DM's input, entity_text (expanded: query_text) when they differ" if
+          args.entity_text == "expanded" else f"the mention alone (entity_text); {n_expanded} of {len(keep)} entities "
+          "lose an expansion") + f"; max_new_tokens {args.max_new_tokens}")
     print(f"  {'source':<16} {'DM':<13} {'entities':>8} {'no DM result':>12}  K built (N/A)       short lists (< K)")
     for c in counts:
         print(f"  {c['source']:<16} {c['dm']:<13} {c['entities']:>8} {c['skipped_no_dm_result']:>12}  "

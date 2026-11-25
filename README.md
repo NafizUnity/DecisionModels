@@ -395,6 +395,18 @@ both top-1s (counts and codes only).
 
     bash picker_run.sh --dm-run real_whole_list_desc --candidates retriever --sources rrf_csv+fsn+syn --ks 20 --note first --batch-size 8
 
+**The RAG pipeline's picker settings.** That picker shows the mention alone (`entity_text` from the fused ranking
+file, not the expanded `query_text`), the note's first 3000 characters, and allows 8192 new tokens. `--entity-text
+mention` gives the mention alone (read from the DM's input file, sha256-checked; folder suffix `_mention`); the default
+`expanded` keeps the DM's input, `entity_text (expanded: query_text)`. `--max-new-tokens N` (default 512; suffix
+`_mnt<N>`). It ran Gemma in 4-bit; ours runs in bf16.
+
+    bash picker_run.sh --dm-run real_whole_list_desc --candidates retriever --sources snomed_syn --ks 20 --note first \
+         --max-note-chars 3000 --entity-text mention --max-new-tokens 8192 --batch-size 8
+
+The report also gives `llm_cat3` (the pick has the reference code's first 3 characters) and `llm_chapter` (the same
+ICD-10 chapter, by the WHO chapter blocks).
+
 `--stop-tokens tokenizer_eos` gives the uploaded script's generation (folder suffix `_tokeos`). There, Gemma does not stop at the end of its
 turn, and its last answer is scored. Picker folders hold entity text (and, with `--note`, the notes), so keep them on the server.
 

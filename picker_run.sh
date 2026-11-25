@@ -13,6 +13,8 @@
 #            --note none|first (default none)  --max-note-chars N (default 4000)
 #            --candidates retriever (no DM: the retriever's own top K in its order, as the original RAG picker)
 #            --stop-tokens tokenizer_eos (the original script's generation; default: the model's own end tokens)
+#            --entity-text mention (entity_text alone, as the RAG pipeline's picker; default expanded: the DM's input)
+#            --max-new-tokens N (default 512; the RAG pipeline's picker used 8192)
 #            --batch-size N (entities per generate call; default 1)
 #            --limit N (first N entities: smoke test)  --name NAME (picker folder under PICKER_RESULTS_DIR, or a full path)
 #            --gpu N  --conf FILE  --foreground  --report-only  --validate-only (build and check, no model)
@@ -24,7 +26,7 @@
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$HERE/picker.conf"; DM_RUN=""; DMS="DREX MEDDECIDER31"; SOURCES_ARG=""; KS_ARG="3,5,10,20"; FORMAT="native"
-NOTE="none"; NOTE_CHARS=4000; CANDIDATES="dm"; DMS_SET=0; STOP_TOKENS="generation_config"; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
+NOTE="none"; NOTE_CHARS=4000; CANDIDATES="dm"; DMS_SET=0; STOP_TOKENS="generation_config"; ENTITY_TEXT="expanded"; MAX_NEW=512; LIMIT=""; NAME=""; GPU_ARG=""; FOREGROUND=0; REPORT_ONLY=0; VALIDATE_ONLY=0; BATCH=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dm-run) DM_RUN="${2:?--dm-run needs a folder}"; shift 2 ;;
@@ -36,6 +38,8 @@ while [ $# -gt 0 ]; do
         --note) NOTE="${2:?--note needs none or first}"; shift 2 ;;
         --max-note-chars) NOTE_CHARS="${2:?--max-note-chars needs a number}"; shift 2 ;;
         --stop-tokens) STOP_TOKENS="${2:?--stop-tokens needs generation_config or tokenizer_eos}"; shift 2 ;;
+        --entity-text) ENTITY_TEXT="${2:?--entity-text needs expanded or mention}"; shift 2 ;;
+        --max-new-tokens) MAX_NEW="${2:?--max-new-tokens needs a number}"; shift 2 ;;
         --limit) LIMIT="${2:?--limit needs a number}"; shift 2 ;;
         --batch-size) BATCH="${2:?--batch-size needs a number}"; shift 2 ;;
         --name) NAME="${2:?--name needs a folder}"; shift 2 ;;
@@ -44,7 +48,7 @@ while [ $# -gt 0 ]; do
         --foreground) FOREGROUND=1; shift ;;
         --report-only) REPORT_ONLY=1; shift ;;
         --validate-only) VALIDATE_ONLY=1; shift ;;
-        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -78,6 +82,8 @@ if [ -n "$LIMIT" ] && ! [[ "$LIMIT" =~ ^[0-9]+$ && "$LIMIT" -ge 1 ]]; then stop 
 [[ "$FORMAT" =~ ^(native|requests)$ ]] || stop "--format must be native or requests"
 [[ "$BATCH" =~ ^[0-9]+$ && "$BATCH" -ge 1 ]] || stop "--batch-size must be a whole number of 1 or more"
 [[ "$STOP_TOKENS" =~ ^(generation_config|tokenizer_eos)$ ]] || stop "--stop-tokens must be generation_config or tokenizer_eos"
+[[ "$ENTITY_TEXT" =~ ^(expanded|mention)$ ]] || stop "--entity-text must be expanded or mention"
+[[ "$MAX_NEW" =~ ^[0-9]+$ && "$MAX_NEW" -ge 1 ]] || stop "--max-new-tokens must be a whole number of 1 or more"
 
 # ---- the same clean, offline shell as realdata_run.sh -------------------------------------------------------------------
 if declare -F module >/dev/null 2>&1; then module purge >/dev/null 2>&1 || true; fi
@@ -100,7 +106,7 @@ cd "$HERE"
 case "$DM_RUN" in /*) DM_DIR="$DM_RUN" ;; *) DM_DIR="$DM_RESULTS_DIR/$DM_RUN" ;; esac
 [ -f "$DM_DIR/requests.jsonl" ] || stop "$DM_DIR has no requests.jsonl (is --dm-run a DM run folder?)"
 if [ -z "$NAME" ]; then
-    NAME="$(basename "$DM_DIR")__llm$([ "$CANDIDATES" = retriever ] && echo _retriever || true)$([ "$STOP_TOKENS" = tokenizer_eos ] && echo _tokeos || true)$([ "$NOTE" = first ] && echo "_note$NOTE_CHARS" || true)$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
+    NAME="$(basename "$DM_DIR")__llm$([ "$CANDIDATES" = retriever ] && echo _retriever || true)$([ "$STOP_TOKENS" = tokenizer_eos ] && echo _tokeos || true)$([ "$ENTITY_TEXT" = mention ] && echo _mention || true)$([ "$MAX_NEW" != 512 ] && echo "_mnt$MAX_NEW" || true)$([ "$NOTE" = first ] && echo "_note$NOTE_CHARS" || true)$([ "$FORMAT" = requests ] && echo _requests || true)$([ -n "$LIMIT" ] && echo "_smoke$LIMIT" || true)"
 fi
 case "$NAME" in /*) OUT="$NAME" ;; *) OUT="$PICKER_RESULTS_DIR/$NAME" ;; esac
 
@@ -110,9 +116,10 @@ if [ "$REPORT_ONLY" = 1 ]; then
 fi
 
 # ---- stage 1 (this terminal): build and validate -----------------------------------------------------------------------
-say "DM run $DM_DIR | DMs $DMS | sources ${SOURCES_ARG:-all} | K $KS_ARG | format $FORMAT | note: $([ "$NOTE" = none ] && echo none || echo "first $NOTE_CHARS chars") | GPU $GPU"
+say "DM run $DM_DIR | DMs $DMS | sources ${SOURCES_ARG:-all} | K $KS_ARG | format $FORMAT | note: $([ "$NOTE" = none ] && echo none || echo "first $NOTE_CHARS chars") | entity text $ENTITY_TEXT | max_new_tokens $MAX_NEW | GPU $GPU"
 build=("$PY" picker_build.py --dm-run "$DM_DIR" --out "$OUT" --llm-model "$LLM_MODEL" --candidates "$CANDIDATES" --ks "$KS_ARG"
-       --format "$FORMAT" --stop-tokens "$STOP_TOKENS" --note "$NOTE" --max-note-chars "$NOTE_CHARS")
+       --format "$FORMAT" --stop-tokens "$STOP_TOKENS" --note "$NOTE" --max-note-chars "$NOTE_CHARS"
+       --entity-text "$ENTITY_TEXT" --max-new-tokens "$MAX_NEW")
 [ "$NOTE" != none ] && build+=(--notes "$NOTES")
 [ "$CANDIDATES" = dm ] && build+=(--dms "$DMS")
 [ -n "$SOURCES_ARG" ] && build+=(--sources "$SOURCES_ARG")

@@ -8,6 +8,7 @@ One row per source x DM x K, on the entities the DM has a result for:
   dm_hit@K       the reference code is in the DM's top K: the most the LLM can reach at this K
   dm_top1        the DM's own first code is right (the result without the LLM)
   llm_top1       the LLM's pick is right; delta = llm_top1 - dm_top1
+  llm_cat3, llm_chapter   the LLM's pick has the reference code's first 3 characters (category) / its ICD-10 chapter
   llm_acc_in     the LLM is right, among entities whose reference code it was shown
   fixed / broke  the DM's first code was wrong and the LLM is right / the DM's was right and the LLM is wrong
   no_answer, not_in_list   LLM replies without a readable code / with a code outside the list (both count as wrong)
@@ -16,6 +17,7 @@ A K above what that DM read is N/A; a run without predictions yet is "not run". 
 --save writes new timestamped files; it never overwrites.
 """
 import argparse
+import bisect
 import csv
 import json
 import sys
@@ -25,6 +27,23 @@ from pathlib import Path
 
 def dotless(code):
     return (code or "").upper().replace(".", "")
+
+
+# ICD-10 chapters by first code (WHO blocks, as in ICD-10-CA): a code belongs to the last chapter starting at or before
+# its letter and first two digits. U (codes for special purposes) sorts between T and V.
+CHAPTER_STARTS = [("A00", "I"), ("C00", "II"), ("D50", "III"), ("E00", "IV"), ("F00", "V"), ("G00", "VI"), ("H00", "VII"),
+                  ("H60", "VIII"), ("I00", "IX"), ("J00", "X"), ("K00", "XI"), ("L00", "XII"), ("M00", "XIII"),
+                  ("N00", "XIV"), ("O00", "XV"), ("P00", "XVI"), ("Q00", "XVII"), ("R00", "XVIII"), ("S00", "XIX"),
+                  ("U00", "XXII"), ("V00", "XX"), ("Z00", "XXI")]
+_STARTS = [c for c, _ in CHAPTER_STARTS]
+
+
+def chapter(code):
+    """The ICD-10 chapter of a code, or None when it does not look like a code (letter, two digits)."""
+    c = dotless(code)
+    if len(c) < 3 or not c[0].isalpha() or not c[1:3].isdigit():
+        return None
+    return CHAPTER_STARTS[bisect.bisect_right(_STARTS, c[:3]) - 1][1]
 
 
 def f3(x):
@@ -71,9 +90,15 @@ def main():
             if missing or set(preds) - set(ents):
                 sys.exit(f"STOPPED: {path.name} does not cover the built entities ({len(missing)} missing); rebuild or rerun")
             right = {e: dotless(p["llm_icd_code"]) == dotless(ents[e]["gt_code"]) for e, p in preds.items()}
+            cat3 = {e: len(dotless(p["llm_icd_code"])) >= 3 and dotless(p["llm_icd_code"])[:3] == dotless(ents[e]["gt_code"])[:3]
+                    for e, p in preds.items()}
+            chap = {e: chapter(p["llm_icd_code"]) is not None and chapter(p["llm_icd_code"]) == chapter(ents[e]["gt_code"])
+                    for e, p in preds.items()}
             shown = {e: ents[e]["dm_rank"] is not None and ents[e]["dm_rank"] <= k for e in ents}
             row.update(status="ok", done=len(preds),
                        llm_top1=sum(right.values()) / n,
+                       llm_cat3=sum(cat3.values()) / n,
+                       llm_chapter=sum(chap.values()) / n,
                        llm_acc_in=(sum(right[e] for e in ents if shown[e]) / hit) if hit else None,
                        fixed=sum(right[e] and ents[e]["dm_rank"] != 1 for e in ents),
                        broke=sum(not right[e] and ents[e]["dm_rank"] == 1 for e in ents),
@@ -82,23 +107,24 @@ def main():
             row["delta"] = row["llm_top1"] - dm1
             rows.append(row)
 
-    head = ["source", "dm", "k", "entities", "dm_hit@K", "dm_top1", "llm_top1", "delta", "llm_acc_in", "fixed", "broke",
-            "no_answer", "not_in_list", "retr_top1"]
+    head = ["source", "dm", "k", "entities", "dm_hit@K", "dm_top1", "llm_top1", "delta", "llm_cat3", "llm_chapter",
+            "llm_acc_in", "fixed", "broke", "no_answer", "not_in_list", "retr_top1"]
     table = [head]
     for r in rows:
         if r["status"] != "ok":
             table.append([r["source"], r["dm"], str(r["k"]), str(r["entities"]),
-                          f3(r.get("dm_hit@K")), f3(r["dm_top1"])] + [r["status"]] + [""] * 6 + [f3(r["retr_top1"])])
+                          f3(r.get("dm_hit@K")), f3(r["dm_top1"])] + [r["status"]] + [""] * 8 + [f3(r["retr_top1"])])
             continue
         table.append([r["source"], r["dm"], str(r["k"]), str(r["entities"]), f3(r["dm_hit@K"]), f3(r["dm_top1"]),
-                      f3(r["llm_top1"]), f"{r['delta']:+.3f}", f3(r["llm_acc_in"]), str(r["fixed"]), str(r["broke"]),
+                      f3(r["llm_top1"]), f"{r['delta']:+.3f}", f3(r["llm_cat3"]), f3(r["llm_chapter"]), f3(r["llm_acc_in"]), str(r["fixed"]), str(r["broke"]),
                       str(r["no_answer"]), str(r["not_in_list"]), f3(r["retr_top1"])])
     widths = [max(len(t[i]) for t in table) for i in range(len(head))]
     text = ["  ".join(c.ljust(w) for c, w in zip(t, widths)) for t in table]
     text.insert(1, "  ".join("-" * w for w in widths))
     note = "none" if s["note"] == "none" else f"the first {s['max_note_chars']} characters of each entity's note"
     notes = [f"DM run: {s['dm_run']} (DM order from the {s['order']} requests); format {s['format']}; note: {note}; "
-             f"stop tokens: {s['stop_tokens']}" + (f"; SMOKE: first {s['limit']} entities only" if s["limit"] else "")]
+             f"stop tokens: {s['stop_tokens']}; entity text: {s.get('entity_text', 'expanded')}; "
+             f"max_new_tokens: {s['max_new_tokens']}" + (f"; SMOKE: first {s['limit']} entities only" if s["limit"] else "")]
     if s.get("candidates") == "retriever":
         notes.append("Candidates: the retriever's own top K in retriever order (no DM). In the RETRIEVER rows the dm_* "
                      "columns describe the retriever: dm_hit@K = the retriever's recall@K, dm_top1 = its first code")
@@ -125,7 +151,8 @@ def main():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         md, cs = out / f"report_{stamp}.md", out / f"report_{stamp}.csv"
         md.write_text("```\n" + "\n".join(text) + "\n```\n\n" + "\n\n".join(notes) + "\n", encoding="utf8")
-        keys = ["source", "dm", "k", "status", "entities", "done", "dm_hit@K", "dm_top1", "llm_top1", "delta", "llm_acc_in",
+        keys = ["source", "dm", "k", "status", "entities", "done", "dm_hit@K", "dm_top1", "llm_top1", "delta", "llm_cat3",
+                "llm_chapter", "llm_acc_in",
                 "fixed", "broke", "no_answer", "not_in_list", "retr_top1", "skipped_no_dm_result", "short_lists",
                 "batch_size"]
         with open(cs, "x", newline="") as fh:
