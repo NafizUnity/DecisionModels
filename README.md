@@ -213,6 +213,23 @@ If the entities have `note_id`, `start` and `end` (the fused ranking files do), 
 them. They let the LLM picker find each entity's clinical note (step 10). The fields must be on all entities or on
 none. A run built before this lacks them; the picker then looks them up in the DM's input file (see step 10).
 
+**With the clinical note** (`--notes notes.jsonl`, or `realdata_run.sh --note` with `NOTES` in `realdata.conf`). The
+DM's context becomes the note's first 3000 characters (`--max-note-chars N`), then the entity text as before:
+
+    Clinical note:
+    <the note's first 3000 characters>
+
+    Diagnosis: <entity_text (expanded: query_text)>
+
+The question becomes "Based on the clinical note as context, which ICD-10-CA code best matches the diagnosis?". The
+options, their order and everything else stay the same as in the build without the note. Each request also keeps the
+entity text alone as `entity_state`, for the LLM picker. The build needs `note_id`/`start`/`end` on every entity and
+every note in notes.jsonl. It stops when 5% or more of the mentions are not at `start:end` of their note (a notes file
+that does not belong to the data), and prints how many mentions lie past the cut. `realdata_run.sh` names the folder
+`..._note3000`, and reuses a folder only when it was built with the same notes file and cut.
+
+    bash realdata_run.sh --desc --note --name drex_med_desc_note3000 --models "DREX MEDDECIDER31"
+
 ## 4. Smoke test (about 260 requests per model)
 
     for m in ELEPHANT DREX CLEF; do $PY -u run_decision_model.py run $m --gpu 0 --run-dir $RUN --weights-dir $MODELS --stride 100; done

@@ -43,7 +43,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import lh_core  # noqa: E402
-from decision_eval import ORDERS, SOURCES, load_descriptions, parse_ks  # noqa: E402
+from decision_eval import ORDERS, SOURCES, load_descriptions, load_notes, parse_ks, squash  # noqa: E402
 from run_decision_model import model_view, parse_sources, rank_options, retriever_rankings  # noqa: E402
 
 DM_NAMES = tuple(lh_core.MODELS_INFO)
@@ -53,10 +53,6 @@ NOTE_MODES = ("none", "first")   # none: no clinical note; first: the note's fir
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def squash(text):
-    return " ".join((text or "").lower().split())
 
 
 def dm_input(build, why):
@@ -88,26 +84,6 @@ def note_links(reqs, build):
     if lacking:
         sys.exit(f"STOPPED: {len(lacking)} entities in {src} have no note_id/start/end (first: {lacking[:5]})")
     return {str(d["entity_id"]): (str(d["note_id"]), d["start"], d["end"]) for d in data}, f"DM input file {src}"
-
-
-def load_notes(path):
-    """note_id -> note_text. Stops on a bad line, a line without note_id/note_text, or a note_id given twice with
-    different text."""
-    notes = {}
-    with open(path, encoding="utf8") as fh:
-        for n, line in enumerate(fh, 1):
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                sys.exit(f"STOPPED: {path} line {n} is not JSON")
-            nid, text = (rec.get("note_id"), rec.get("note_text")) if isinstance(rec, dict) else (None, None)
-            if nid in (None, "") or not isinstance(text, str):
-                sys.exit(f"STOPPED: {path} line {n} has no note_id or no note_text")
-            if notes.setdefault(str(nid), text) != text:
-                sys.exit(f"STOPPED: {path} has note_id {nid} twice with different text")
-    return notes
 
 
 def stem(source, dm):
@@ -219,7 +195,8 @@ def main():
             sys.exit(f"STOPPED: {len(missing)} note_id(s) of these entities are not in {args.notes} (first: {missing[:5]})")
 
     # ---- the entity text the LLM sees: the DM's input (default) or the mention alone ----
-    state = {r["entity_id"]: r["record"]["state"] for r in reqs if r["entity_id"] in keep}
+    # a DM run built with --notes has the note in its context; its entity text alone is entity_state
+    state = {r["entity_id"]: r.get("entity_state", r["record"]["state"]) for r in reqs if r["entity_id"] in keep}
     if args.entity_text == "mention":
         mentions = mention_texts(build)
         absent = sorted(e for e in keep if e not in mentions)
@@ -361,7 +338,7 @@ def main():
     print(f"built {out} ({args.format} format, note: {args.note}, " + (
         "candidates: the retriever's own top K, retriever order)" if args.candidates == "retriever"
         else f"DM order from the {args.order} requests)"))
-    print(f"  entity text: " + ("the DM's input, entity_text (expanded: query_text) when they differ" if
+    print("  entity text: " + ("the DM's input, entity_text (expanded: query_text) when they differ" if
           args.entity_text == "expanded" else f"the mention alone (entity_text); {n_expanded} of {len(keep)} entities "
           "lose an expansion") + f"; max_new_tokens {args.max_new_tokens}")
     print(f"  {'source':<16} {'DM':<13} {'entities':>8} {'no DM result':>12}  K built (N/A)       short lists (< K)")

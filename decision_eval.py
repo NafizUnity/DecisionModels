@@ -3,6 +3,7 @@
   python decision_eval.py build --src FILE.json --run-dir results/NAME       # requests.jsonl (contains entity text; keep it with the data)
       [--descriptions icd_snomed_index.jsonl]                                 # options carry each code's long description
       [--top K]                                                               # only the retriever's first K codes per list
+      [--notes notes.jsonl [--max-note-chars 3000]]                           # context: the note's start, then the entity
   python run_decision_model.py run ELEPHANT --gpu 1 --run-dir results/NAME   # one model at a time, resumable
   python decision_eval.py report --run-dir results/NAME [--smoke]            # tables in results/NAME
 
@@ -17,6 +18,9 @@ adds the code itself. check_descriptions.py checks an index before such a build.
 With --top K, each request holds only the first K codes of the source's ranking (shorter lists are kept whole); a
 reference code ranked below K is then not an option and counts as a miss, so the ceiling is the retriever's hit@K.
 Without --top, requests and option orders are exactly those of the whole-list runs.
+With --notes, the context is "Clinical note:\n<the note's first --max-note-chars characters>\n\nDiagnosis: <entity text>"
+and the question QUESTION_NOTE; options and orders are the same as without it. Each request also keeps the entity text
+alone (entity_state) for the LLM picker. Without --notes the context is the entity text only.
 """
 import argparse
 import csv
@@ -38,6 +42,8 @@ ORDERS = ("original", "shuf1")
 SOURCES = ("csv_dense", "snomed_fsn", "snomed_syn", "rrf_csv+fsn", "rrf_csv+syn", "rrf_fsn+syn", "rrf_csv+fsn+syn")
 NAMES = {m: info["label"] for m, info in lh_core.MODELS_INFO.items()}
 QUESTION = "Which ICD-10-CA code best matches the diagnosis described above?"
+# With --notes: the context is the note's first --max-note-chars characters, then the entity text under "Diagnosis:".
+QUESTION_NOTE = "Based on the clinical note as context, which ICD-10-CA code best matches the diagnosis?"
 # Optional per-entity link to the clinical note (fused ranking files): copied into every request and prediction row so
 # the LLM picker can find the note. The models never see it (it is outside "record").
 NOTE_KEYS = ("note_id", "start", "end")
@@ -60,6 +66,35 @@ def parse_ks(text):
     if not ks or ks[0] < 1:
         raise argparse.ArgumentTypeError("--ks needs at least one number, all 1 or more")
     return ks
+
+
+def load_notes(path):
+    """note_id -> note_text. Stops on a bad line, a line without note_id/note_text, or a note_id given twice with
+    different text."""
+    notes = {}
+    with open(path, encoding="utf8") as fh:
+        for n, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                sys.exit(f"STOPPED: {path} line {n} is not JSON")
+            nid, text = (rec.get("note_id"), rec.get("note_text")) if isinstance(rec, dict) else (None, None)
+            if nid in (None, "") or not isinstance(text, str):
+                sys.exit(f"STOPPED: {path} line {n} has no note_id or no note_text")
+            if notes.setdefault(str(nid), text) != text:
+                sys.exit(f"STOPPED: {path} has note_id {nid} twice with different text")
+    return notes
+
+
+def squash(text):
+    return " ".join((text or "").lower().split())
+
+
+def note_context(note_text, max_chars, entity_state):
+    """The DM's context with a clinical note: the note's first max_chars characters, then the entity text."""
+    return f"Clinical note:\n{note_text[:max_chars]}\n\nDiagnosis: {entity_state}"
 
 
 def merged_context(entity, query):
@@ -180,6 +215,22 @@ def cmd_build(args):
     if args.top is not None and args.top < 2:
         sys.exit(f"STOPPED: --top must be at least 2 (a choice needs two options), got {args.top}; nothing was written")
     top = args.top
+    notes = None
+    if args.notes:   # the clinical note in the DM's context
+        if args.max_note_chars < 1:
+            sys.exit("STOPPED: --max-note-chars must be 1 or more; nothing was written")
+        if "note_id" not in data[0]:
+            sys.exit(f"STOPPED: --notes needs note_id/start/end on every entity of {args.src}; nothing was written")
+        notes = load_notes(args.notes)
+        missing = sorted({str(d["note_id"]) for d in data} - set(notes))
+        if missing:
+            sys.exit(f"STOPPED: {len(missing)} note_id(s) are not in {args.notes} (first: {missing[:5]}); nothing was written")
+    if notes is not None:   # a wrong notes file shows as mentions that are not at start:end of their note
+        off = [str(d["entity_id"]) for d in data
+               if not squash(d["entity_text"]).startswith(squash(notes[str(d["note_id"])][d["start"]:d["end"]]) or "\0")]
+        if len(off) > 0.05 * len(data):
+            sys.exit(f"STOPPED: {len(off)} of {len(data)} mentions are not at start:end of their note in {args.notes} "
+                     f"(first: {off[:5]}); is it the notes file of {args.src}? Nothing was written")
     desc = load_descriptions(args.descriptions) if args.descriptions else None
     option_text = "long_description" if desc else "code"
     if desc:
@@ -190,11 +241,19 @@ def cmd_build(args):
     rows = []
     lengths = {source: [] for source in SOURCES}
     retr_rank = {source: [] for source in SOURCES}
+    past_cut = span_mismatch = 0
     for d in data:
         gt = d["ground_truth_codes"][0]
         eid = str(d["entity_id"])
         state = merged_context(d["entity_text"], d.get("query_text") or "")
         link = {"note_id": str(d["note_id"]), "start": d["start"], "end": d["end"]} if "note_id" in d else {}
+        extra = {}
+        if notes is not None:   # entity_state: the entity text alone, for the LLM picker (the context now holds the note)
+            note = notes[str(d["note_id"])]
+            past_cut += d["end"] > args.max_note_chars
+            span_mismatch += not squash(d["entity_text"]).startswith(squash(note[d["start"]:d["end"]]) or "\0")
+            extra = {"entity_state": state}
+            state = note_context(note, args.max_note_chars, state)
         for source in SOURCES:
             ranking = list(d["rankings"][source])[:top]                  # top=None keeps the whole ranking
             rank = ranking.index(gt) + 1 if gt in ranking else None      # the retriever's rank of the reference code
@@ -203,7 +262,7 @@ def cmd_build(args):
             for order in ORDERS:
                 # the shuffle seed keeps "all" for whole lists, so those runs reproduce the earlier option orders
                 codes = order_for(ranking, order, f"{eid}|{source}", "all" if top is None else f"top{top}")
-                rows.append({"request_id": f"{eid}|{source}|{order}", "entity_id": eid, **link, "source": source,
+                rows.append({"request_id": f"{eid}|{source}|{order}", "entity_id": eid, **link, **extra, "source": source,
                              "order": order, "n_options": len(codes), "gt_code": gt,
                              "ground_truth_codes": list(d["ground_truth_codes"]), "answerable": rank is not None,
                              "gt_letter": gt if rank is not None else None,     # the option key of the reference code
@@ -211,7 +270,7 @@ def cmd_build(args):
                              "retriever_rank": rank, "rank1_correct": rank == 1, "codes": codes, "option_text": option_text,
                              "top": top,
                              "record": {"state": state, "questions": {lh_core.QUESTION_ID: {
-                                 "type": "choice", "instructions": QUESTION,
+                                 "type": "choice", "instructions": QUESTION if notes is None else QUESTION_NOTE,
                                  "criteria": {c: desc[c] if desc else None for c in codes}}}}})
     held = "a source's whole ranking" if top is None else f"the first {top} codes of a source's ranking"
     if n_cut:
@@ -243,8 +302,19 @@ def cmd_build(args):
         "descriptions": str(Path(args.descriptions).resolve()) if desc else None,
         "descriptions_sha256": sha(args.descriptions) if desc else None, "top": top, "requests": len(rows),
         "max_options_read": MAX_OPTIONS, "lists_cut_to_max": n_cut, "longest_list_in_src": longest,
-        "note_link": "note_id" in data[0]})
+        "note_link": "note_id" in data[0], "question": QUESTION if notes is None else QUESTION_NOTE,
+        "notes": str(Path(args.notes).resolve()) if notes is not None else None,
+        "notes_sha256": sha(args.notes) if notes is not None else None,
+        "max_note_chars": args.max_note_chars if notes is not None else None,
+        **({"mention_past_cut": past_cut, "span_mismatch": span_mismatch} if notes is not None else {})})
     print(f"options: {'code + ' + option_text if desc else 'bare codes'}; {'whole lists' if top is None else f'top {top} per list'}")
+    if notes is not None:
+        print(f"context: the clinical note's first {args.max_note_chars} characters, then 'Diagnosis: <entity text>'; "
+              f"question: {QUESTION_NOTE!r}")
+        print(f"  {len({str(d['note_id']) for d in data})} notes; mention past the cut (not in the excerpt): {past_cut} of "
+              f"{len(data)} entities; note text at start:end differs from entity_text: {span_mismatch}")
+        if span_mismatch:
+            print(f"WARNING: {span_mismatch} mentions do not match their note at start:end (5% or more stops the build)")
     print(f"wrote {len(rows)} requests for {len(data)} entities ({sum(r['n_options'] for r in rows)} options in all) -> {out/'requests.jsonl'}")
 
 
@@ -538,6 +608,9 @@ if __name__ == "__main__":
     b.add_argument("--descriptions", help="icd_snomed_index.jsonl: give every option its code's long description")
     b.add_argument("--top", type=int, metavar="K", help="give the model only the retriever's first K codes of each list "
                    "(default: the whole list)")
+    b.add_argument("--notes", help="notes.jsonl (note_id, note_text): the context is the entity's clinical note (its first "
+                   "--max-note-chars characters), then the entity text; default: the entity text only")
+    b.add_argument("--max-note-chars", type=int, default=3000, help="with --notes: how much of the note (default 3000)")
     r = sub.add_parser("report"); r.add_argument("--run-dir", required=True)
     r.add_argument("--smoke", action="store_true", help="report the smoke-test predictions (written as *_smoke.csv/.md)")
     r.add_argument("--sources", type=parse_sources, default=None, metavar="'A B'",

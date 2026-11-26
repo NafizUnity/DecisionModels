@@ -6,6 +6,9 @@
 #   bash realdata_run.sh --desc --top 20       # retriever's top 20 + desc.     -> RESULTS_DIR/real_top20_desc
 #   bash realdata_run.sh --desc --top 20 --smoke-only --smoke-n 2 --name check   # quick check: about 2 requests per model
 #   bash realdata_run.sh --desc --top 10 --sources "rrf_csv+fsn rrf_csv+fsn+syn"   # only these retrieval sources
+#   bash realdata_run.sh --desc --note --name drex_desc_note3000   # context: the clinical note's first 3000 characters
+#   --note: the context is the entity's clinical note (NOTES in realdata.conf; its first --max-note-chars characters,
+#   default 3000), then "Diagnosis: <entity text>"; the question asks for the code "based on the clinical note as context".
 #   Each model reads at most its own number of options (MedDecider 10, BioDecision 24, the others 255): from a longer
 #   list it gets the retriever's first N codes, and the report shows its hit@k above N as N/A.
 #   --sources: the build still holds all 7 sources; only the chosen ones are run and reported. Rerun later without it
@@ -13,6 +16,7 @@
 #   --ks "1,3,5,10,20,30,40": the report's hit@k cutoffs (default: 1,3,5,10,20,50,... up to K); --report-only reapplies them.
 #   --orders original: only the retriever's order (default: original and shuf1); a later run without it adds shuf1.
 #   options: --models "DREX CLEF"  --sources "A B"  --orders original  --ks "1,3,5"  --gpu 1  --name my_run (under RESULTS_DIR, or a full path)  --conf FILE  --no-smoke
+#            --note  --max-note-chars N
 #            --foreground  --report-only  --smoke-only (stop after the smoke test)  --smoke-n N (smoke sample of at least N)
 #
 # Paths (data, index, models, RESULTS_DIR) come from realdata.conf (run realdata_setup.sh first). The build runs in this terminal; the model runs then
@@ -23,10 +27,12 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGS=("$@")
 CONF="$HERE/realdata.conf"; DESC=0; TOP=""; NAME=""; GPU_ARG=""; MODELS_ARG=""; SMOKE=1; FOREGROUND=0; REPORT_ONLY=0
-SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""; KS_ARG=""; ORDERS_ARG=""
+SMOKE_ONLY=0; SMOKE_N=""; SOURCES_ARG=""; KS_ARG=""; ORDERS_ARG=""; NOTE=0; NOTE_CHARS=3000
 while [ $# -gt 0 ]; do
     case "$1" in
         --desc) DESC=1; shift ;;
+        --note) NOTE=1; shift ;;
+        --max-note-chars) NOTE_CHARS="${2:?--max-note-chars needs a number}"; shift 2 ;;
         --top) TOP="${2:?--top needs K}"; shift 2 ;;
         --models) MODELS_ARG="${2:?--models needs a list}"; shift 2 ;;
         --sources) SOURCES_ARG="${2:?--sources needs a list}"; shift 2 ;;
@@ -40,7 +46,7 @@ while [ $# -gt 0 ]; do
         --report-only) REPORT_ONLY=1; shift ;;
         --smoke-only) SMOKE_ONLY=1; FOREGROUND=1; shift ;;
         --smoke-n) SMOKE_N="${2:?--smoke-n needs a number}"; shift 2 ;;
-        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 2 ;;
     esac
 done
@@ -53,8 +59,9 @@ placeholder() { [[ -z "$1" || "$1" == /path/to/* ]]; }
 source "$CONF"
 : "${BASE:?BASE is not set in $CONF}"; MODELS="${MODELS:-$BASE/models}"
 GPU="${GPU_ARG:-${GPU:-0}}"; RUN_MODELS="${MODELS_ARG:-${RUN_MODELS:-ELEPHANT DREX CLEF BIODECISION MEDDECIDER27 MEDDECIDER31}}"; RUN_MODELS="${RUN_MODELS^^}"
-SMOKE_STRIDE="${SMOKE_STRIDE:-100}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"
+SMOKE_STRIDE="${SMOKE_STRIDE:-100}"; DATA="${DATA:-}"; INDEX="${INDEX:-}"; NOTES="${NOTES:-}"
 if [ -n "$TOP" ] && ! [[ "$TOP" =~ ^[0-9]+$ && "$TOP" -ge 2 ]]; then stop "--top must be a whole number of 2 or more"; fi
+[[ "$NOTE_CHARS" =~ ^[0-9]+$ && "$NOTE_CHARS" -ge 1 ]] || stop "--max-note-chars must be a whole number of 1 or more"
 if [ -n "$SMOKE_N" ] && ! [[ "$SMOKE_N" =~ ^[0-9]+$ && "$SMOKE_N" -ge 1 ]]; then stop "--smoke-n must be a whole number of 1 or more"; fi
 if [ "$SMOKE_ONLY" = 1 ] && { [ "$SMOKE" = 0 ] || [ "$REPORT_ONLY" = 1 ]; }; then stop "--smoke-only cannot be combined with --no-smoke or --report-only"; fi
 for m in $RUN_MODELS; do
@@ -78,7 +85,7 @@ PY="$(dirname "$(command -v conda)")/python"; [ -x "$PY" ] || PY=python3
 # ---- run folder -------------------------------------------------------------------------------------------------------
 RESULTS_DIR="${RESULTS_DIR:-$HERE/results}"
 if [ -z "$NAME" ]; then
-    NAME="real_$([ -n "$TOP" ] && echo "top$TOP" || echo whole_list)$([ "$DESC" = 1 ] && echo _desc || true)"
+    NAME="real_$([ -n "$TOP" ] && echo "top$TOP" || echo whole_list)$([ "$DESC" = 1 ] && echo _desc || true)$([ "$NOTE" = 1 ] && echo "_note$NOTE_CHARS" || true)"
 fi
 case "$NAME" in /*) RUN="$NAME" ;; *) RUN="$RESULTS_DIR/$NAME" ;; esac   # --name: a full path, or a name under RESULTS_DIR
 cd "$HERE"
@@ -134,15 +141,17 @@ fi
 # ======================================================================================================================
 # Stage 1 (this terminal): checks and build. Stage 2 (background): smoke test, full runs, report.
 if [ "${REALDATA_STAGE:-1}" = 1 ]; then
-    [ "$REPORT_ONLY" = 1 ] && say "Report only: $RUN | models $RUN_MODELS" || say "Run folder $RUN | options: $([ "$DESC" = 1 ] && echo "code + description" || echo "bare codes"); $([ -n "$TOP" ] && echo "top $TOP" || echo "whole lists") | models $RUN_MODELS | sources ${SOURCES_ARG:-all} | orders ${ORDERS_ARG:-all} | GPU $GPU"
+    [ "$REPORT_ONLY" = 1 ] && say "Report only: $RUN | models $RUN_MODELS" || say "Run folder $RUN | options: $([ "$DESC" = 1 ] && echo "code + description" || echo "bare codes"); $([ -n "$TOP" ] && echo "top $TOP" || echo "whole lists"); context: $([ "$NOTE" = 1 ] && echo "note (first $NOTE_CHARS chars) + entity" || echo "entity text") | models $RUN_MODELS | sources ${SOURCES_ARG:-all} | orders ${ORDERS_ARG:-all} | GPU $GPU"
     [ -d "$MODELS" ] || stop "models folder $MODELS not found: run bash realdata_setup.sh"
     if [ "$REPORT_ONLY" = 0 ]; then
         placeholder "$DATA" && stop "DATA is not set in $CONF"
         [ -f "$DATA" ] || stop "DATA $DATA not found"
         if [ "$DESC" = 1 ]; then placeholder "$INDEX" && stop "--desc needs INDEX in $CONF"; [ -f "$INDEX" ] || stop "INDEX $INDEX not found"; fi
+        if [ "$NOTE" = 1 ]; then placeholder "$NOTES" && stop "--note needs NOTES in $CONF (notes.jsonl with note_id and note_text)"; [ -f "$NOTES" ] || stop "NOTES $NOTES not found"; fi
         if [ -f "$RUN/requests.jsonl" ]; then
-            # reuse the build only if it was made from the same data, index and K
-            if ! verdict="$(DATA="$DATA" INDEX="$([ "$DESC" = 1 ] && echo "$INDEX" || true)" TOP="$TOP" "$PY" - "$RUN/build_meta.json" <<'PY'
+            # reuse the build only if it was made from the same data, index, K and notes
+            if ! verdict="$(DATA="$DATA" INDEX="$([ "$DESC" = 1 ] && echo "$INDEX" || true)" TOP="$TOP" \
+                    NOTES_FILE="$([ "$NOTE" = 1 ] && echo "$NOTES" || true)" NOTE_CHARS="$NOTE_CHARS" "$PY" - "$RUN/build_meta.json" <<'PY'
 import hashlib, json, os, sys
 from pathlib import Path
 meta_path = Path(sys.argv[1])
@@ -156,6 +165,11 @@ if meta.get("src_sha256") != sha(os.environ["DATA"]): problems.append("DATA diff
 if (meta.get("descriptions_sha256") is None) != (index is None): problems.append("built " + ("without" if index else "with") + " descriptions")
 elif index and meta.get("descriptions_sha256") != sha(index): problems.append("INDEX differs from the one it was built with")
 if meta.get("top") != top: problems.append(f"built with top {meta.get('top')}, asked for top {top}")
+notes = os.environ["NOTES_FILE"] or None
+if (meta.get("notes_sha256") is None) != (notes is None): problems.append("built " + ("without" if notes else "with") + " the clinical note")
+elif notes and meta.get("notes_sha256") != sha(notes): problems.append("NOTES differs from the one it was built with")
+elif notes and meta.get("max_note_chars") != int(os.environ["NOTE_CHARS"]):
+    problems.append(f"built with the first {meta.get('max_note_chars')} note characters, asked for {os.environ['NOTE_CHARS']}")
 print("; ".join(problems) if problems else f"same inputs ({meta.get('requests')} requests)")
 sys.exit(1 if problems else 0)
 PY
@@ -165,6 +179,7 @@ PY
             build=(--src "$DATA" --run-dir "$RUN")
             [ "$DESC" = 1 ] && build+=(--descriptions "$INDEX")
             [ -n "$TOP" ] && build+=(--top "$TOP")
+            [ "$NOTE" = 1 ] && build+=(--notes "$NOTES" --max-note-chars "$NOTE_CHARS")
             say "Build: decision_eval.py build ${build[*]}"
             "$PY" decision_eval.py build "${build[@]}" || stop "build failed (see above; nothing was written)"
         fi
